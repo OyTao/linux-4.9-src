@@ -396,6 +396,7 @@ int pci_enable_resources(struct pci_dev *dev, int mask)
 			return -EINVAL;
 		}
 
+		/* OyTao: Memory space/ IO space address 资源 */
 		if (r->flags & IORESOURCE_IO)
 			cmd |= PCI_COMMAND_IO;
 		if (r->flags & IORESOURCE_MEM)

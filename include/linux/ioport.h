@@ -34,6 +34,7 @@ struct resource {
 
 #define IORESOURCE_TYPE_BITS	0x00001f00	/* Resource type */
 #define IORESOURCE_IO		0x00000100	/* PCI/ISA I/O ports */
+/* OyTao: 指的是PCI设备的memory address space. */
 #define IORESOURCE_MEM		0x00000200
 #define IORESOURCE_REG		0x00000300	/* Register offsets */
 #define IORESOURCE_IRQ		0x00000400

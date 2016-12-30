@@ -110,6 +110,7 @@ enum {
 #define NVME_CAP_MPSMIN(cap)	(((cap) >> 48) & 0xf)
 #define NVME_CAP_MPSMAX(cap)	(((cap) >> 52) & 0xf)
 
+/* OyTao: 根据cmb location后3位确定bar 的index */
 #define NVME_CMB_BIR(cmbloc)	((cmbloc) & 0x7)
 #define NVME_CMB_OFST(cmbloc)	(((cmbloc) >> 12) & 0xfffff)
 #define NVME_CMB_SZ(cmbsz)	(((cmbsz) >> 12) & 0xfffff)

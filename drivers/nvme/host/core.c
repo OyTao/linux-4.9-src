@@ -1078,6 +1078,7 @@ static const struct block_device_operations nvme_fops = {
 	.pr_ops		= &nvme_pr_ops,
 };
 
+/* OyTao: 阻塞，只等到读取的NVME_REG_CSTS状态变成@enbled */
 static int nvme_wait_ready(struct nvme_ctrl *ctrl, u64 cap, bool enabled)
 {
 	unsigned long timeout =
@@ -1085,6 +1086,7 @@ static int nvme_wait_ready(struct nvme_ctrl *ctrl, u64 cap, bool enabled)
 	u32 csts, bit = enabled ? NVME_CSTS_RDY : 0;
 	int ret;
 
+	/* OyTao: 读取NVME_REG_CSTS寄存器，判断是否是enable或者disable */
 	while ((ret = ctrl->ops->reg_read32(ctrl, NVME_REG_CSTS, &csts)) == 0) {
 		if (csts == ~0)
 			return -ENODEV;
@@ -1111,6 +1113,7 @@ static int nvme_wait_ready(struct nvme_ctrl *ctrl, u64 cap, bool enabled)
  * bits', but doing so may cause the device to complete commands to the
  * admin queue ... and we don't know what memory that might be pointing at!
  */
+/* OyTao: 通过NVME_REG_CC寄存器 disable设备 */
 int nvme_disable_ctrl(struct nvme_ctrl *ctrl, u64 cap)
 {
 	int ret;
@@ -1118,6 +1121,7 @@ int nvme_disable_ctrl(struct nvme_ctrl *ctrl, u64 cap)
 	ctrl->ctrl_config &= ~NVME_CC_SHN_MASK;
 	ctrl->ctrl_config &= ~NVME_CC_ENABLE;
 
+	/* OyTao: 将disable bit写入NVME_REG_CC寄存器 */
 	ret = ctrl->ops->reg_write32(ctrl, NVME_REG_CC, ctrl->ctrl_config);
 	if (ret)
 		return ret;
@@ -1130,6 +1134,7 @@ int nvme_disable_ctrl(struct nvme_ctrl *ctrl, u64 cap)
 	if ((ctrl->quirks & NVME_QUIRK_DELAY_BEFORE_CHK_RDY) && ctrl->tagset)
 		msleep(NVME_QUIRK_DELAY_AMOUNT);
 
+	/* OyTao: 一直等到设备真正变成 disable */
 	return nvme_wait_ready(ctrl, cap, false);
 }
 EXPORT_SYMBOL_GPL(nvme_disable_ctrl);
@@ -1939,6 +1944,7 @@ EXPORT_SYMBOL_GPL(nvme_queue_async_events);
 
 static DEFINE_IDA(nvme_instance_ida);
 
+/* OyTao: 得到nvme的instance ID */
 static int nvme_set_instance(struct nvme_ctrl *ctrl)
 {
 	int instance, error;
@@ -2013,15 +2019,18 @@ int nvme_init_ctrl(struct nvme_ctrl *ctrl, struct device *dev,
 	mutex_init(&ctrl->namespaces_mutex);
 	kref_init(&ctrl->kref);
 	ctrl->dev = dev;
+	/* OyTao: */
 	ctrl->ops = ops;
 	ctrl->quirks = quirks;
 	INIT_WORK(&ctrl->scan_work, nvme_scan_work);
 	INIT_WORK(&ctrl->async_event_work, nvme_async_event_work);
 
+	/* OyTao: 设置nvme device的instance ID */
 	ret = nvme_set_instance(ctrl);
 	if (ret)
 		goto out;
 
+	/* OyTao: 创建一个字符设备(作用) TODO */ 
 	ctrl->device = device_create_with_groups(nvme_class, ctrl->dev,
 				MKDEV(nvme_char_major, ctrl->instance),
 				ctrl, nvme_dev_attr_groups,

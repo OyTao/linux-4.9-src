@@ -447,6 +447,7 @@ dma_get_sgtable_attrs(struct device *dev, struct sg_table *sgt, void *cpu_addr,
 #define arch_dma_alloc_attrs(dev, flag)	(true)
 #endif
 
+/* TODO */
 static inline void *dma_alloc_attrs(struct device *dev, size_t size,
 				       dma_addr_t *dma_handle, gfp_t flag,
 				       unsigned long attrs)

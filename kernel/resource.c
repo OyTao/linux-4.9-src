@@ -220,16 +220,22 @@ static struct resource * __request_resource(struct resource *root, struct resour
 	resource_size_t end = new->end;
 	struct resource *tmp, **p;
 
+	/* OyTao: 资源边界检查 */
 	if (end < start)
 		return root;
 	if (start < root->start)
 		return root;
 	if (end > root->end)
 		return root;
+
 	p = &root->child;
 	for (;;) {
 		tmp = *p;
 		if (!tmp || tmp->start > end) {
+			/* 
+			 * OyTao: new的start,end是在tmp以及tmp->sibling中间，没有冲突 
+			 * 同时将@new插入到root的child中（按照start排序的),预留.
+			 */
 			new->sibling = tmp;
 			*p = new;
 			new->parent = root;
@@ -238,6 +244,7 @@ static struct resource * __request_resource(struct resource *root, struct resour
 		p = &tmp->sibling;
 		if (tmp->end < start)
 			continue;
+		/* OyTao: tmp与当前想保留的new中范围有overlap */
 		return tmp;
 	}
 }
@@ -1149,13 +1156,17 @@ struct resource * __request_region(struct resource *parent,
 
 		conflict = __request_resource(parent, res);
 		if (!conflict)
+		/* OyTao: 如果申请的res的adress范围与当前的已经存在的没有冲突 */
 			break;
+
 		if (conflict != parent) {
 			if (!(conflict->flags & IORESOURCE_BUSY)) {
 				parent = conflict;
 				continue;
 			}
 		}
+
+		/* OyTao: TODO */
 		if (conflict->flags & flags & IORESOURCE_MUXED) {
 			add_wait_queue(&muxed_resource_wait, &wait);
 			write_unlock(&resource_lock);
@@ -1165,6 +1176,7 @@ struct resource * __request_region(struct resource *parent,
 			write_lock(&resource_lock);
 			continue;
 		}
+
 		/* Uhhuh, that didn't work out.. */
 		free_resource(res);
 		res = NULL;

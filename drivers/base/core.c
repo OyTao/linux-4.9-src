@@ -1708,6 +1708,7 @@ device_create_groups_vargs(struct class *class, struct device *parent,
 	if (class == NULL || IS_ERR(class))
 		goto error;
 
+	/* OyTao: 创建一个device object */
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev) {
 		retval = -ENOMEM;
@@ -1726,6 +1727,7 @@ device_create_groups_vargs(struct class *class, struct device *parent,
 	if (retval)
 		goto error;
 
+	/* OyTao: 添加device至Kobject */
 	retval = device_add(dev);
 	if (retval)
 		goto error;

@@ -2153,6 +2153,7 @@ static int __blk_mq_alloc_rq_maps(struct blk_mq_tag_set *set)
 {
 	int i;
 
+	/* OyTao: 针对每一个device hw queue 初始化 request queue map */
 	for (i = 0; i < set->nr_hw_queues; i++) {
 		set->tags[i] = blk_mq_init_rq_map(set, i);
 		if (!set->tags[i])
@@ -2184,6 +2185,10 @@ static int blk_mq_alloc_rq_maps(struct blk_mq_tag_set *set)
 		if (!err)
 			break;
 
+		/*
+		 * OyTao: 不断调整queue depth
+		 * __blk_mq_alloc_rq_maps可能因为q_depth过大导致内存分配失败
+		 */
 		set->queue_depth >>= 1;
 		if (set->queue_depth < set->reserved_tags + BLK_MQ_TAG_MIN) {
 			err = -ENOMEM;
@@ -2251,12 +2256,16 @@ int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 	if (!set->tags)
 		return -ENOMEM;
 
+	/* 
+	 * OyTao: map[nr_cpu],  idx = cpu_id, map[cpu_idx] = dev_queue_id 
+	 */ 
 	ret = -ENOMEM;
 	set->mq_map = kzalloc_node(sizeof(*set->mq_map) * nr_cpu_ids,
 			GFP_KERNEL, set->numa_node);
 	if (!set->mq_map)
 		goto out_free_tags;
 
+	/* OyTao:将每个cpu与device queue id对应起来 */
 	if (set->ops->map_queues)
 		ret = set->ops->map_queues(set);
 	else
@@ -2264,6 +2273,7 @@ int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 	if (ret)
 		goto out_free_mq_map;
 
+	/* OyTao:  */
 	ret = blk_mq_alloc_rq_maps(set);
 	if (ret)
 		goto out_free_mq_map;

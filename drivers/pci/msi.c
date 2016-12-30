@@ -1203,6 +1203,7 @@ int pci_alloc_irq_vectors(struct pci_dev *dev, unsigned int min_vecs,
 {
 	int vecs = -ENOSPC;
 
+	/* OyTao: msi-x 中断模式 */
 	if (flags & PCI_IRQ_MSIX) {
 		vecs = __pci_enable_msix_range(dev, NULL, min_vecs, max_vecs,
 				flags);
@@ -1244,6 +1245,7 @@ EXPORT_SYMBOL(pci_free_irq_vectors);
  * @dev: PCI device to operate on
  * @nr: device-relative interrupt vector index (0-based).
  */
+/* OyTao: TODO */
 int pci_irq_vector(struct pci_dev *dev, unsigned int nr)
 {
 	if (dev->msix_enabled) {

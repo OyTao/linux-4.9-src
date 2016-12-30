@@ -903,6 +903,7 @@ EXPORT_SYMBOL_GPL(__pci_complete_power_transition);
  * 0 if device already is in the requested state.
  * 0 if device's power state has been successfully changed.
  */
+/* OyTao: TODO */
 int pci_set_power_state(struct pci_dev *dev, pci_power_t state)
 {
 	int error;
@@ -1296,6 +1297,7 @@ int __weak pcibios_enable_device(struct pci_dev *dev, int bars)
 	return pci_enable_resources(dev, bars);
 }
 
+/* OyTao: TODO */
 static int do_pci_enable_device(struct pci_dev *dev, int bars)
 {
 	int err;
@@ -1303,6 +1305,7 @@ static int do_pci_enable_device(struct pci_dev *dev, int bars)
 	u16 cmd;
 	u8 pin;
 
+	/* OyTao: 更改设备的电源状态 */
 	err = pci_set_power_state(dev, PCI_D0);
 	if (err < 0 && err != -EIO)
 		return err;
@@ -1311,9 +1314,11 @@ static int do_pci_enable_device(struct pci_dev *dev, int bars)
 	if (bridge)
 		pcie_aspm_powersave_config_link(bridge);
 
+	/* OyTao: enable特定的BARs的资源 */
 	err = pcibios_enable_device(dev, bars);
 	if (err < 0)
 		return err;
+
 	pci_fixup_device(pci_fixup_enable, dev);
 
 	if (dev->msi_enabled || dev->msix_enabled)
@@ -1379,20 +1384,24 @@ static int pci_enable_device_flags(struct pci_dev *dev, unsigned long flags)
 	 * so that things like MSI message writing will behave as expected
 	 * (e.g. if the device really is in D0 at enable time).
 	 */
+	/* OyTao: TODO */
 	if (dev->pm_cap) {
 		u16 pmcsr;
 		pci_read_config_word(dev, dev->pm_cap + PCI_PM_CTRL, &pmcsr);
 		dev->current_state = (pmcsr & PCI_PM_CTRL_STATE_MASK);
 	}
 
+	/* OyTao: enable pci device(enable_cnt) */
 	if (atomic_inc_return(&dev->enable_cnt) > 1)
 		return 0;		/* already enabled */
 
+	/* OyTao: 如果当前设备上面还有pci bridge设备，需要enable */
 	bridge = pci_upstream_bridge(dev);
 	if (bridge)
 		pci_enable_bridge(bridge);
 
 	/* only skip sriov related */
+	/* OyTao: 找出@flags(IO/Memory space)的BARs */
 	for (i = 0; i <= PCI_ROM_RESOURCE; i++)
 		if (dev->resource[i].flags & flags)
 			bars |= (1 << i);
@@ -1400,6 +1409,7 @@ static int pci_enable_device_flags(struct pci_dev *dev, unsigned long flags)
 		if (dev->resource[i].flags & flags)
 			bars |= (1 << i);
 
+	/* OyTao: enable Bars */
 	err = do_pci_enable_device(dev, bars);
 	if (err < 0)
 		atomic_dec(&dev->enable_cnt);
@@ -3050,6 +3060,7 @@ EXPORT_SYMBOL(pci_release_region);
  *	Returns 0 on success, or %EBUSY on error.  A warning
  *	message is also printed on failure.
  */
+/* OyTao: */
 static int __pci_request_region(struct pci_dev *pdev, int bar,
 				const char *res_name, int exclusive)
 {
@@ -3059,16 +3070,19 @@ static int __pci_request_region(struct pci_dev *pdev, int bar,
 		return 0;
 
 	if (pci_resource_flags(pdev, bar) & IORESOURCE_IO) {
+		/* OyTao: 处理PCI设备的IO space address */
 		if (!request_region(pci_resource_start(pdev, bar),
 			    pci_resource_len(pdev, bar), res_name))
 			goto err_out;
 	} else if (pci_resource_flags(pdev, bar) & IORESOURCE_MEM) {
+		/* OyTao: 处理PCI设备的Memory space address */
 		if (!__request_mem_region(pci_resource_start(pdev, bar),
 					pci_resource_len(pdev, bar), res_name,
 					exclusive))
 			goto err_out;
 	}
 
+	/* OyTao: TODO */
 	dr = find_pci_dr(pdev);
 	if (dr)
 		dr->region_mask |= 1 << bar;
@@ -3149,6 +3163,7 @@ static int __pci_request_selected_regions(struct pci_dev *pdev, int bars,
 {
 	int i;
 
+	/* OyTao: pci 设备只有6个BAR, 根据传进来的bars进行处理 */
 	for (i = 0; i < 6; i++)
 		if (bars & (1 << i))
 			if (__pci_request_region(pdev, i, res_name, excl))

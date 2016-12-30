@@ -118,13 +118,25 @@ struct nvme_queue {
 	struct nvme_dev *dev;
 	char irqname[24];	/* nvme4294967295-65535\0 */
 	spinlock_t q_lock;
+	/* OyTao: submission queue内核虚拟地址 */
 	struct nvme_command *sq_cmds;
 	struct nvme_command __iomem *sq_cmds_io;
+
+	/* OyTao: completion queue 内核可访问的地址（虚拟地址) */
 	volatile struct nvme_completion *cqes;
+
 	struct blk_mq_tags **tags;
+
+	/* OyTao: submission queue的内存物理地址 device使用 */
 	dma_addr_t sq_dma_addr;
+
+	/* OyTao: completion queue的内存的物理地址，device使用 */
 	dma_addr_t cq_dma_addr;
+
+	/* OyTao: TODO */
+	/* OyTao: queue 对应的doorbell 地址 */
 	u32 __iomem *q_db;
+
 	u16 q_depth;
 	s16 cq_vector;
 	u16 sq_tail;
@@ -1034,12 +1046,14 @@ static int nvme_cmb_qdepth(struct nvme_dev *dev, int nr_io_queues,
 static int nvme_alloc_sq_cmds(struct nvme_dev *dev, struct nvme_queue *nvmeq,
 				int qid, int depth)
 {
+	/* OyTao: 如果device支持CMB,直接从CMB中获取 */
 	if (qid && dev->cmb && use_cmb_sqes && NVME_CMB_SQS(dev->cmbsz)) {
 		unsigned offset = (qid - 1) * roundup(SQ_SIZE(depth),
 						      dev->ctrl.page_size);
 		nvmeq->sq_dma_addr = dev->cmb_dma_addr + offset;
 		nvmeq->sq_cmds_io = dev->cmb + offset;
 	} else {
+		/* OyTao: 如果不支持CMB，则需要DMA支持 */
 		nvmeq->sq_cmds = dma_alloc_coherent(dev->dev, SQ_SIZE(depth),
 					&nvmeq->sq_dma_addr, GFP_KERNEL);
 		if (!nvmeq->sq_cmds)
@@ -1049,6 +1063,9 @@ static int nvme_alloc_sq_cmds(struct nvme_dev *dev, struct nvme_queue *nvmeq,
 	return 0;
 }
 
+/* 
+ * OyTao: 主要分配submission Queue以及 Compeltion Queue。
+ */
 static struct nvme_queue *nvme_alloc_queue(struct nvme_dev *dev, int qid,
 							int depth)
 {
@@ -1056,11 +1073,13 @@ static struct nvme_queue *nvme_alloc_queue(struct nvme_dev *dev, int qid,
 	if (!nvmeq)
 		return NULL;
 
+	/* OyTao: 为compeltion_queue分配DMA空间 */
 	nvmeq->cqes = dma_zalloc_coherent(dev->dev, CQ_SIZE(depth),
 					  &nvmeq->cq_dma_addr, GFP_KERNEL);
 	if (!nvmeq->cqes)
 		goto free_nvmeq;
 
+	/* OyTao: 分配submission queue */
 	if (nvme_alloc_sq_cmds(dev, nvmeq, qid, depth))
 		goto free_cqdma;
 
@@ -1071,6 +1090,8 @@ static struct nvme_queue *nvme_alloc_queue(struct nvme_dev *dev, int qid,
 	spin_lock_init(&nvmeq->q_lock);
 	nvmeq->cq_head = 0;
 	nvmeq->cq_phase = 1;
+
+	/* OyTao: TODO */
 	nvmeq->q_db = &dev->dbs[qid * 2 * dev->db_stride];
 	nvmeq->q_depth = depth;
 	nvmeq->qid = qid;
@@ -1090,6 +1111,7 @@ static struct nvme_queue *nvme_alloc_queue(struct nvme_dev *dev, int qid,
 
 static int queue_request_irq(struct nvme_queue *nvmeq)
 {
+	/* OyTao: 线程处理 */
 	if (use_threaded_interrupts)
 		return request_threaded_irq(nvmeq_irq(nvmeq), nvme_irq_check,
 				nvme_irq, IRQF_SHARED, nvmeq->irqname, nvmeq);
@@ -1103,6 +1125,7 @@ static void nvme_init_queue(struct nvme_queue *nvmeq, u16 qid)
 	struct nvme_dev *dev = nvmeq->dev;
 
 	spin_lock_irq(&nvmeq->q_lock);
+	
 	nvmeq->sq_tail = 0;
 	nvmeq->cq_head = 0;
 	nvmeq->cq_phase = 1;
@@ -1212,9 +1235,11 @@ static int nvme_configure_admin_queue(struct nvme_dev *dev)
 {
 	int result;
 	u32 aqa;
+	/* OyTao: NVME  Cap寄存器 */
 	u64 cap = lo_hi_readq(dev->bar + NVME_REG_CAP);
 	struct nvme_queue *nvmeq;
 
+	/* OyTao: TODO */
 	dev->subsystem = readl(dev->bar + NVME_REG_VS) >= NVME_VS(1, 1, 0) ?
 						NVME_CAP_NSSRC(cap) : 0;
 
@@ -1222,10 +1247,12 @@ static int nvme_configure_admin_queue(struct nvme_dev *dev)
 	    (readl(dev->bar + NVME_REG_CSTS) & NVME_CSTS_NSSRO))
 		writel(NVME_CSTS_NSSRO, dev->bar + NVME_REG_CSTS);
 
+	/* OyTao: disable nvme cc */
 	result = nvme_disable_ctrl(&dev->ctrl, cap);
 	if (result < 0)
 		return result;
 
+	/* OyTao: 第一个queue是admin queue */
 	nvmeq = dev->queues[0];
 	if (!nvmeq) {
 		nvmeq = nvme_alloc_queue(dev, 0, NVME_AQ_DEPTH);
@@ -1233,18 +1260,23 @@ static int nvme_configure_admin_queue(struct nvme_dev *dev)
 			return -ENOMEM;
 	}
 
+	/* OyTao: admin queue attribute */
 	aqa = nvmeq->q_depth - 1;
 	aqa |= aqa << 16;
-
 	writel(aqa, dev->bar + NVME_REG_AQA);
+
+	/* OyTao: 将SQ以及CQ的dma地址写入到device的寄存器，告知device */
 	lo_hi_writeq(nvmeq->sq_dma_addr, dev->bar + NVME_REG_ASQ);
 	lo_hi_writeq(nvmeq->cq_dma_addr, dev->bar + NVME_REG_ACQ);
 
+	/* OyTao: 操作完成之后，enable ctrl */
 	result = nvme_enable_ctrl(&dev->ctrl, cap);
 	if (result)
 		return result;
 
 	nvmeq->cq_vector = 0;
+
+	/* OyTao: 设置中断处理函数 */
 	result = queue_request_irq(nvmeq);
 	if (result) {
 		nvmeq->cq_vector = -1;
@@ -1345,14 +1377,18 @@ static void __iomem *nvme_map_cmb(struct nvme_dev *dev)
 	void __iomem *cmb;
 	dma_addr_t dma_addr;
 
+	/* OyTao: cmb size */
 	dev->cmbsz = readl(dev->bar + NVME_REG_CMBSZ);
 	if (!(NVME_CMB_SZ(dev->cmbsz)))
 		return NULL;
+
+	/* OyTao: cmb Location */
 	dev->cmbloc = readl(dev->bar + NVME_REG_CMBLOC);
 
 	if (!use_cmb_sqes)
 		return NULL;
 
+	/* OyTao: TODO(需要根据cmb_location以及cmb_size 寄存器获取具体的dma_addr */
 	szu = (u64)1 << (12 + 4 * NVME_CMB_SZU(dev->cmbsz));
 	size = szu * NVME_CMB_SZ(dev->cmbsz);
 	offset = szu * NVME_CMB_OFST(dev->cmbloc);
@@ -1370,10 +1406,13 @@ static void __iomem *nvme_map_cmb(struct nvme_dev *dev)
 		size = bar_size - offset;
 
 	dma_addr = pci_resource_start(pdev, NVME_CMB_BIR(dev->cmbloc)) + offset;
+
+	/* OyTao: 通过WC 模式映射 */
 	cmb = ioremap_wc(dma_addr, size);
 	if (!cmb)
 		return NULL;
 
+	/* OyTao: cmb_dma_addr 内存的物理地址； cmb:内核可访问的虚拟地址 */
 	dev->cmb_dma_addr = dma_addr;
 	dev->cmb_size = size;
 	return cmb;
@@ -1576,15 +1615,18 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 	int result = -ENOMEM;
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
 
+	/* OyTao: enble pci 设备的memory space */
 	if (pci_enable_device_mem(pdev))
 		return result;
 
+	/* OyTao: TODO */
 	pci_set_master(pdev);
 
 	if (dma_set_mask_and_coherent(dev->dev, DMA_BIT_MASK(64)) &&
 	    dma_set_mask_and_coherent(dev->dev, DMA_BIT_MASK(32)))
 		goto disable;
 
+	/* OyTao: BAR0 (可以查询nvme spec)  */
 	if (readl(dev->bar + NVME_REG_CSTS) == -1) {
 		result = -ENODEV;
 		goto disable;
@@ -1595,6 +1637,7 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 	 * interrupts. Pre-enable a single MSIX or MSI vec for setup. We'll
 	 * adjust this later.
 	 */
+	/* OyTao: pcie 中断设置(当前不确定该设备是否支持哪种中断模式，所以都预先设置1)*/
 	result = pci_alloc_irq_vectors(pdev, 1, 1, PCI_IRQ_ALL_TYPES);
 	if (result < 0)
 		return result;
@@ -1603,6 +1646,10 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 
 	dev->q_depth = min_t(int, NVME_CAP_MQES(cap) + 1, NVME_Q_DEPTH);
 	dev->db_stride = 1 << NVME_CAP_STRIDE(cap);
+	/* 
+	 * OyTao: Submission Queue 0 Tail DoorBell (Admin)
+	 * 后面紧跟着的就是各种IO Sumbmission Queue 的DoorBell。
+	 */
 	dev->dbs = dev->bar + 4096;
 
 	/*
@@ -1624,6 +1671,11 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 	 * NULL as final argument to sysfs_add_file_to_group.
 	 */
 
+	/* 
+	 * OyTao: cmb (controller memory buffer)
+	 * cmb的作用主要是把SQ/CQ存储的维持从host memory搬到device memory中，
+	 * 提升性能。
+	 */
 	if (readl(dev->bar + NVME_REG_VS) >= NVME_VS(1, 2, 0)) {
 		dev->cmb = nvme_map_cmb(dev);
 
@@ -1759,18 +1811,31 @@ static void nvme_reset_work(struct work_struct *work)
 	if (dev->ctrl.ctrl_config & NVME_CC_ENABLE)
 		nvme_dev_disable(dev, false);
 
+	/* OyTao: 设置ctl.state, 防止重复进入 */
 	if (!nvme_change_ctrl_state(&dev->ctrl, NVME_CTRL_RESETTING))
 		goto out;
 
+	/* 
+	 * OyTao: 1. enable pci memory space,
+	 *		  2. 获取所有的submission queues bars地址 
+	 *		  3. 在不知道设备支持的中断类型的情况下，设置了MSI/MSI-X 1个中断，
+	 *		     也设置了INT终端。
+	 *		  4. 如果是NVME1.2.0之后，可以通过WC模式，remap CMB内存空间。
+	 */
 	result = nvme_pci_enable(dev);
 	if (result)
 		goto out;
 
+	/* 
+	 * OyTao: 生产SQ&CQ, 同时配置中断 
+	 */ 
 	result = nvme_configure_admin_queue(dev);
 	if (result)
 		goto out;
 
+	/* OyTao: 初始化admin queue一些域 */
 	nvme_init_queue(dev->queues[0], 0);
+
 	result = nvme_alloc_admin_tags(dev);
 	if (result)
 		goto out;
@@ -1870,6 +1935,7 @@ static int nvme_pci_reset_ctrl(struct nvme_ctrl *ctrl)
 	return ret;
 }
 
+/* OyTao: TODO　*/
 static const struct nvme_ctrl_ops nvme_pci_ctrl_ops = {
 	.name			= "pcie",
 	.module			= THIS_MODULE,
@@ -1881,13 +1947,27 @@ static const struct nvme_ctrl_ops nvme_pci_ctrl_ops = {
 	.submit_async_event	= nvme_pci_submit_async_event,
 };
 
+/* OyTao: 对于nvme pci设备，hold住memory space address, remap io space address */
 static int nvme_dev_map(struct nvme_dev *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
 
+	/* 
+	 * OyTao:
+	 * PCI 设备可能有自己的IO地址空间，但是一定有自己的存储器空间以及配置空间
+	 * PC device的配置空间大小为256字节。实际上是一组寄存器。其中头部64字节是
+	 * PCI标准固定的。PCI的配置空间头部有6个BAR(base Address Registers).
+	 * BAR 记录了设备所需要的地址空间的类型(memory base/io base)
+	 */
 	if (pci_request_mem_regions(pdev, "nvme"))
 		return -ENODEV;
 
+	/* 
+	 * OyTao: (TODO) 
+	 * bar 0 address 8k 建立真实页表
+	 * memory space 
+	 * bar 0肯定是IORESOURCE_MEM 
+	 */
 	dev->bar = ioremap(pci_resource_start(pdev, 0), 8192);
 	if (!dev->bar)
 		goto release;
@@ -1903,21 +1983,31 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	int node, result = -ENOMEM;
 	struct nvme_dev *dev;
 
+	/* OyTao: numa idx  TODO */
 	node = dev_to_node(&pdev->dev);
 	if (node == NUMA_NO_NODE)
 		set_dev_node(&pdev->dev, first_memory_node);
 
+	/* OyTao: 分配nvme device */
 	dev = kzalloc_node(sizeof(*dev), GFP_KERNEL, node);
 	if (!dev)
 		return -ENOMEM;
+	/* 
+	 * OyTao: nvme multi queues 分配 
+	 * num_possilbe_cpus() IO命令的queue
+	 * 1个admin queue
+	 */
 	dev->queues = kzalloc_node((num_possible_cpus() + 1) * sizeof(void *),
 							GFP_KERNEL, node);
 	if (!dev->queues)
 		goto free;
 
 	dev->dev = get_device(&pdev->dev);
+
+	/* OyTao: 设置pci_device private data */
 	pci_set_drvdata(pdev, dev);
 
+	/* OyTao: 处理nvme pci bar中的memory space address 和io space address. */
 	result = nvme_dev_map(dev);
 	if (result)
 		goto free;
@@ -1927,12 +2017,15 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	setup_timer(&dev->watchdog_timer, nvme_watchdog_timer,
 		(unsigned long)dev);
 	mutex_init(&dev->shutdown_lock);
+
 	init_completion(&dev->ioq_wait);
 
+	/* OyTao: 创建Page Size和256的DMA prp pool */
 	result = nvme_setup_prp_pools(dev);
 	if (result)
 		goto put_pci;
 
+	/* OyTao: 创建一个字符设备 */ 
 	result = nvme_init_ctrl(&dev->ctrl, &pdev->dev, &nvme_pci_ctrl_ops,
 			id->driver_data);
 	if (result)
@@ -1940,6 +2033,7 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	dev_info(dev->ctrl.device, "pci function %s\n", dev_name(&pdev->dev));
 
+	/* OyTao: 执行nvme_reset_work */
 	queue_work(nvme_workq, &dev->reset_work);
 	return 0;
 
