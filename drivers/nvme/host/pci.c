@@ -1200,6 +1200,8 @@ static int nvme_alloc_admin_tags(struct nvme_dev *dev)
 {
 	if (!dev->ctrl.admin_q) {
 		dev->admin_tagset.ops = &nvme_mq_admin_ops;
+
+		/* OyTao: admin queue的硬件queue只有一个 */
 		dev->admin_tagset.nr_hw_queues = 1;
 
 		/*
@@ -1207,11 +1209,13 @@ static int nvme_alloc_admin_tags(struct nvme_dev *dev)
 		 * condition. See NVM-Express 1.2 specification, section 4.1.2.
 		 */
 		dev->admin_tagset.queue_depth = NVME_AQ_BLKMQ_DEPTH - 1;
+
 		dev->admin_tagset.timeout = ADMIN_TIMEOUT;
 		dev->admin_tagset.numa_node = dev_to_node(dev->dev);
 		dev->admin_tagset.cmd_size = nvme_cmd_size(dev);
 		dev->admin_tagset.driver_data = dev;
 
+		/* OyTao: 分配tagset 以及 tags以及与预分配request */
 		if (blk_mq_alloc_tag_set(&dev->admin_tagset))
 			return -ENOMEM;
 

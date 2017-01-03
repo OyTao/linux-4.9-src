@@ -56,6 +56,7 @@ struct blk_mq_hw_ctx {
 };
 
 struct blk_mq_tag_set {
+	/* OyTao: cpu_id --> hw_queue_id */
 	unsigned int		*mq_map;
 	struct blk_mq_ops	*ops;
 	unsigned int		nr_hw_queues;
@@ -67,8 +68,10 @@ struct blk_mq_tag_set {
 	unsigned int		flags;		/* BLK_MQ_F_* */
 	void			*driver_data;
 
+	/* OyTao: */ 
 	struct blk_mq_tags	**tags;
 
+	/* OyTao: request queue链在tag_list上 */
 	struct mutex		tag_list_lock;
 	struct list_head	tag_list;
 };

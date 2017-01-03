@@ -93,6 +93,7 @@ struct sbq_wait_state {
  * scalability wall when we run out of free bits and have to start putting tasks
  * to sleep.
  */
+/* OyTao: TODO */
 struct sbitmap_queue {
 	/**
 	 * @sb: Scalable bitmap.

@@ -88,6 +88,7 @@ static void blk_set_congested(struct request_list *rl, int sync)
 #endif
 }
 
+/* OyTao: TODO */
 void blk_queue_congestion_threshold(struct request_queue *q)
 {
 	int nr;

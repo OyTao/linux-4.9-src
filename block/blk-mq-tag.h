@@ -13,6 +13,8 @@ struct blk_mq_tags {
 	atomic_t active_queues;
 
 	struct sbitmap_queue bitmap_tags;
+
+	/* OyTao: reserved 作用？ */
 	struct sbitmap_queue breserved_tags;
 
 	struct request **rqs;

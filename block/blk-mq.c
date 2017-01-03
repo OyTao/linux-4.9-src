@@ -1476,6 +1476,9 @@ static struct blk_mq_tags *blk_mq_init_rq_map(struct blk_mq_tag_set *set,
 	unsigned int i, j, entries_per_page, max_order = 4;
 	size_t rq_size, left;
 
+	/* 
+	 * OyTao: 分配 tag object以及其中的bitmap
+	 */
 	tags = blk_mq_init_tags(set->queue_depth, set->reserved_tags,
 				set->numa_node,
 				BLK_MQ_FLAG_TO_ALLOC_POLICY(set->flags));
@@ -1484,6 +1487,10 @@ static struct blk_mq_tags *blk_mq_init_rq_map(struct blk_mq_tag_set *set,
 
 	INIT_LIST_HEAD(&tags->page_list);
 
+	/* 
+	 * OyTao: software queue,
+	 * 预分配好queue_depth个request指针，避免IO路径中的内存分配
+	 */
 	tags->rqs = kzalloc_node(set->queue_depth * sizeof(struct request *),
 				 GFP_KERNEL | __GFP_NOWARN | __GFP_NORETRY,
 				 set->numa_node);
@@ -1500,6 +1507,11 @@ static struct blk_mq_tags *blk_mq_init_rq_map(struct blk_mq_tag_set *set,
 				cache_line_size());
 	left = rq_size * set->queue_depth;
 
+	/* 
+	 * OyTao: rq_size 是request + cmd的大小(考虑cacheline对齐).
+	 * 预先分配好所有的request从page中。
+	 * 然后依次初始化所有的request 
+	 */
 	for (i = 0; i < set->queue_depth; ) {
 		int this_order = max_order;
 		struct page *page;
@@ -1524,9 +1536,11 @@ static struct blk_mq_tags *blk_mq_init_rq_map(struct blk_mq_tag_set *set,
 		if (!page)
 			goto fail;
 
+		/* OyTao:预先分配的request所占用的page,都保存该tag中的page_list中 */
 		page->private = this_order;
 		list_add_tail(&page->lru, &tags->page_list);
 
+		/* OyTao: 拿到分配的pages中的一个request的地址 */
 		p = page_address(page);
 		/*
 		 * Allow kmemleak to scan these pages as they contain pointers
@@ -1547,6 +1561,7 @@ static struct blk_mq_tags *blk_mq_init_rq_map(struct blk_mq_tag_set *set,
 				}
 			}
 
+			/* OyTao: 下一个request的地址 */
 			p += rq_size;
 			i++;
 		}
@@ -1715,6 +1730,7 @@ static void blk_mq_init_cpu_queues(struct request_queue *q,
 	unsigned int i;
 
 	for_each_possible_cpu(i) {
+		/* OyTao: step1: 针对每一个cpu的software queue,初始化。 */
 		struct blk_mq_ctx *__ctx = per_cpu_ptr(q->queue_ctx, i);
 		struct blk_mq_hw_ctx *hctx;
 
@@ -1728,6 +1744,11 @@ static void blk_mq_init_cpu_queues(struct request_queue *q,
 		if (!cpu_online(i))
 			continue;
 
+		/* 
+		 * OyTao: 根据之前tag set中已经映射过的(mq_map),
+		 *        得到cpu对应的hardware context(hctx)
+		 *        设置hctx内存分配的Numa_node。
+		 */
 		hctx = blk_mq_map_queue(q, i);
 
 		/*
@@ -1849,6 +1870,10 @@ static void blk_mq_del_queue_tag_set(struct request_queue *q)
 	mutex_unlock(&set->tag_list_lock);
 }
 
+/* 
+ * OyTao: 处理request与tag set之间的关系
+ *		   
+ */
 static void blk_mq_add_queue_tag_set(struct blk_mq_tag_set *set,
 				     struct request_queue *q)
 {
@@ -1896,14 +1921,17 @@ void blk_mq_release(struct request_queue *q)
 	free_percpu(q->queue_ctx);
 }
 
+/* OyTao: 一个tag_set对应至少request_queue */
 struct request_queue *blk_mq_init_queue(struct blk_mq_tag_set *set)
 {
 	struct request_queue *uninit_q, *q;
 
+	/* OyTao: 分配一个rquest_queue对象 */
 	uninit_q = blk_alloc_queue_node(GFP_KERNEL, set->numa_node);
 	if (!uninit_q)
 		return ERR_PTR(-ENOMEM);
 
+	/* OyTao: 初始化req_queue */
 	q = blk_mq_init_allocated_queue(set, uninit_q);
 	if (IS_ERR(q))
 		blk_cleanup_queue(uninit_q);
@@ -1919,6 +1947,8 @@ static void blk_mq_realloc_hw_ctxs(struct blk_mq_tag_set *set,
 	struct blk_mq_hw_ctx **hctxs = q->queue_hw_ctx;
 
 	blk_mq_sysfs_unregister(q);
+
+	/* OyTao: 为每一个hw queue分配以后各hw context结构。 */
 	for (i = 0; i < set->nr_hw_queues; i++) {
 		int node;
 
@@ -1950,6 +1980,11 @@ static void blk_mq_realloc_hw_ctxs(struct blk_mq_tag_set *set,
 		}
 		blk_mq_hctx_kobj_init(hctxs[i]);
 	}
+
+	/* 
+	 * OyTao: 如果tagset中的hw_queues变小， 则j < q->nr_hw_queues,
+	 * 需要释放tag中内存
+	 */
 	for (j = i; j < q->nr_hw_queues; j++) {
 		struct blk_mq_hw_ctx *hctx = hctxs[j];
 
@@ -1971,23 +2006,33 @@ static void blk_mq_realloc_hw_ctxs(struct blk_mq_tag_set *set,
 	blk_mq_sysfs_register(q);
 }
 
+/* 
+ * OyTao: 一个tag set至少有一个request queue.
+ *        一个request_queue, per-cpu的 Software Context.(nr_cpus).
+ *        同时会分配nr_cpus个hardware context(真实使用的个数<=nr_cpus,
+ *        分配nr_cpus个，是避免后续hw_queues的个数变化)
+ */
 struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 						  struct request_queue *q)
 {
 	/* mark the queue as mq asap */
 	q->mq_ops = set->ops;
 
+	/* OyTao: 分配software contexts. */
 	q->queue_ctx = alloc_percpu(struct blk_mq_ctx);
 	if (!q->queue_ctx)
 		goto err_exit;
 
+	/* OyTao:分配hardware contexts. */
 	q->queue_hw_ctx = kzalloc_node(nr_cpu_ids * sizeof(*(q->queue_hw_ctx)),
 						GFP_KERNEL, set->numa_node);
 	if (!q->queue_hw_ctx)
 		goto err_percpu;
 
+	/* OyTao: cpu与hw_queue的对应关系 */
 	q->mq_map = set->mq_map;
 
+	/* 确保每一个hw_queue 都有一个 hardware context */
 	blk_mq_realloc_hw_ctxs(set, q);
 	if (!q->nr_hw_queues)
 		goto err_hctxs;
@@ -1997,6 +2042,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 
 	q->nr_queues = nr_cpu_ids;
 
+	/* OyTao: TODO　*/
 	q->queue_flags |= QUEUE_FLAG_MQ_DEFAULT;
 
 	if (!(set->flags & BLK_MQ_F_SG_MERGE))
@@ -2008,6 +2054,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	INIT_LIST_HEAD(&q->requeue_list);
 	spin_lock_init(&q->requeue_lock);
 
+	/* OyTao: 设置make_request function */
 	if (q->nr_hw_queues > 1)
 		blk_queue_make_request(q, blk_mq_make_request);
 	else
@@ -2015,17 +2062,25 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 
 	/*
 	 * Do this after blk_queue_make_request() overrides it...
+	 * OyTao: blk_queue_make_request会设置nr_requests为最大值
 	 */
 	q->nr_requests = set->queue_depth;
 
+	/* OyTao: 设置softirq_done_fn = nvme_complete_rq */
 	if (set->ops->complete)
 		blk_queue_softirq_done(q, set->ops->complete);
 
+	/* OyTao: nr_hw_queues 真实的hw_queues数目 初始化sw context以及hw context.*/
 	blk_mq_init_cpu_queues(q, set->nr_hw_queues);
 
 	get_online_cpus();
 	mutex_lock(&all_q_mutex);
 
+	/* 
+	 * OyTao: 
+	 * 将新生成的request queue挂在全局的@all_q_list.(all_q_mutex锁保护)
+	 * 同时将request加入到相应的tag set中。
+	 */
 	list_add_tail(&q->all_q_node, &all_q_list);
 	blk_mq_add_queue_tag_set(set, q);
 	blk_mq_map_swqueue(q, cpu_online_mask);
@@ -2179,6 +2234,10 @@ static int blk_mq_alloc_rq_maps(struct blk_mq_tag_set *set)
 	unsigned int depth;
 	int err;
 
+	/* 
+	 * OyTao: 针对每一个hw queue,都是一样的q_depth,
+	 * 如果某一个分配失败，所有的hw queue对应的tag都需要重新分配以及初始化
+	 */
 	depth = set->queue_depth;
 	do {
 		err = __blk_mq_alloc_rq_maps(set);
@@ -2213,6 +2272,10 @@ static int blk_mq_alloc_rq_maps(struct blk_mq_tag_set *set)
  * May fail with EINVAL for various error conditions. May adjust the
  * requested depth down, if if it too large. In that case, the set
  * value will be stored in set->queue_depth.
+ */
+/*
+ * OyTao:分配一个tagset,对应hw_queue分配一个tag,初始化其中的bitmap,
+ * 同时对每一个tag中预分配好queue_depth个request，初始化。
  */
 int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 {
@@ -2251,8 +2314,10 @@ int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 	if (set->nr_hw_queues > nr_cpu_ids)
 		set->nr_hw_queues = nr_cpu_ids;
 
+	/* OyTao: 分配CPU个数个 tag指针, 真实的blk_mq_tags在blk_mq_init_tags分配 */
 	set->tags = kzalloc_node(nr_cpu_ids * sizeof(struct blk_mq_tags *),
 				 GFP_KERNEL, set->numa_node);
+
 	if (!set->tags)
 		return -ENOMEM;
 
@@ -2273,7 +2338,11 @@ int blk_mq_alloc_tag_set(struct blk_mq_tag_set *set)
 	if (ret)
 		goto out_free_mq_map;
 
-	/* OyTao:  */
+	/* 
+	 * OyTao:  针对没有个hw-queue，分配一个tag, 并且初始化其中的bitmap,
+	 * 同时预先分配好tag中的request(cache_line对齐)并初始化,初始化函数在set->opt,
+	 * requset所占用的pages全部保存在@page_list of tag.
+	 */
 	ret = blk_mq_alloc_rq_maps(set);
 	if (ret)
 		goto out_free_mq_map;
@@ -2348,6 +2417,7 @@ void blk_mq_update_nr_hw_queues(struct blk_mq_tag_set *set, int nr_hw_queues)
 
 	set->nr_hw_queues = nr_hw_queues;
 	list_for_each_entry(q, &set->tag_list, tag_set_list) {
+
 		blk_mq_realloc_hw_ctxs(set, q);
 
 		if (q->nr_hw_queues > 1)

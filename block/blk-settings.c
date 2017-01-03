@@ -163,8 +163,13 @@ void blk_queue_make_request(struct request_queue *q, make_request_fn *mfn)
 	q->nr_requests = BLKDEV_MAX_RQ;
 
 	q->make_request_fn = mfn;
+
+	/* OyTao: 512对齐　*/
 	blk_queue_dma_alignment(q, 511);
+
+	/* OyTao: TODO */
 	blk_queue_congestion_threshold(q);
+
 	q->nr_batching = BLK_BATCH_REQ;
 
 	blk_set_default_limits(&q->limits);
@@ -187,6 +192,7 @@ EXPORT_SYMBOL(blk_queue_make_request);
  *    blk_queue_bounce_limit to have lower memory pages allocated as bounce
  *    buffers for doing I/O to pages residing above @max_addr.
  **/
+/* OyTao: TODO */
 void blk_queue_bounce_limit(struct request_queue *q, u64 max_addr)
 {
 	unsigned long b_pfn = max_addr >> PAGE_SHIFT;

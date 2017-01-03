@@ -363,6 +363,7 @@ static int bt_alloc(struct sbitmap_queue *bt, unsigned int depth,
 				       node);
 }
 
+/* TODO */
 static struct blk_mq_tags *blk_mq_init_bitmap_tags(struct blk_mq_tags *tags,
 						   int node, int alloc_policy)
 {
@@ -371,6 +372,7 @@ static struct blk_mq_tags *blk_mq_init_bitmap_tags(struct blk_mq_tags *tags,
 
 	if (bt_alloc(&tags->bitmap_tags, depth, round_robin, node))
 		goto free_tags;
+
 	if (bt_alloc(&tags->breserved_tags, tags->nr_reserved_tags, round_robin,
 		     node))
 		goto free_bitmap_tags;
@@ -394,6 +396,7 @@ struct blk_mq_tags *blk_mq_init_tags(unsigned int total_tags,
 		return NULL;
 	}
 
+	/* OyTao:  分配blk_mq_tag object  */
 	tags = kzalloc_node(sizeof(*tags), GFP_KERNEL, node);
 	if (!tags)
 		return NULL;

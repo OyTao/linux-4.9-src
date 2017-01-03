@@ -41,6 +41,7 @@ void blk_mq_disable_hotplug(void);
 int blk_mq_map_queues(struct blk_mq_tag_set *set);
 extern int blk_mq_hw_queue_to_node(unsigned int *map, unsigned int);
 
+/* OyTao: 根据cpu id获取对应的hardware context */
 static inline struct blk_mq_hw_ctx *blk_mq_map_queue(struct request_queue *q,
 		int cpu)
 {
