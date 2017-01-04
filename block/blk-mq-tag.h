@@ -10,6 +10,7 @@ struct blk_mq_tags {
 	unsigned int nr_tags;
 	unsigned int nr_reserved_tags;
 
+	/* OyTao: TODO */
 	atomic_t active_queues;
 
 	struct sbitmap_queue bitmap_tags;

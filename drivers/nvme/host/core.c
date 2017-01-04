@@ -211,22 +211,30 @@ void nvme_requeue_req(struct request *req)
 }
 EXPORT_SYMBOL_GPL(nvme_requeue_req);
 
+/*
+ * OyTao: @qid: hardware queue index 
+ * 根据qid,从对应的hardware queue context中tag分配request.
+ */
 struct request *nvme_alloc_request(struct request_queue *q,
 		struct nvme_command *cmd, unsigned int flags, int qid)
 {
 	struct request *req;
 
 	if (qid == NVME_QID_ANY) {
+		/* OyTao: 从当前cpu对应的hw queue tag中分配request */
 		req = blk_mq_alloc_request(q, nvme_is_write(cmd), flags);
 	} else {
+		/* OyTao: 从指定的hw queue tag中分配request */
 		req = blk_mq_alloc_request_hctx(q, nvme_is_write(cmd), flags,
 				qid ? qid - 1 : 0);
 	}
 	if (IS_ERR(req))
 		return req;
 
+	/* OyTao: TODO */
 	req->cmd_type = REQ_TYPE_DRV_PRIV;
 	req->cmd_flags |= REQ_FAILFAST_DRIVER;
+
 	req->cmd = (unsigned char *)cmd;
 	req->cmd_len = sizeof(struct nvme_command);
 
@@ -393,6 +401,7 @@ int __nvme_submit_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 	void *meta = NULL;
 	int ret;
 
+	/* OyTao: 从对应的tag中获取空闲的request */
 	req = nvme_alloc_request(q, cmd, 0, NVME_QID_ANY);
 	if (IS_ERR(req))
 		return PTR_ERR(req);
@@ -449,6 +458,7 @@ int __nvme_submit_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 			}
 		}
 	}
+
  submit:
 	blk_execute_rq(req->q, disk, req, 0);
 	ret = req->errors;
@@ -458,14 +468,17 @@ int __nvme_submit_user_cmd(struct request_queue *q, struct nvme_command *cmd,
 		if (copy_to_user(meta_buffer, meta, meta_len))
 			ret = -EFAULT;
 	}
+
  out_free_meta:
 	kfree(meta);
+
  out_unmap:
 	if (bio) {
 		if (disk && bio->bi_bdev)
 			bdput(bio->bi_bdev);
 		blk_rq_unmap_user(bio);
 	}
+
  out:
 	blk_mq_free_request(req);
 	return ret;
@@ -552,6 +565,7 @@ int nvme_identify_ctrl(struct nvme_ctrl *dev, struct nvme_id_ctrl **id)
 	struct nvme_command c = { };
 	int error;
 
+	/* OyTao 构建nvme_admin_identify命令 */ 
 	/* gcc-4.4.4 (at least) has issues with initializers and anon unions */
 	c.identify.opcode = nvme_admin_identify;
 	c.identify.cns = cpu_to_le32(NVME_ID_CNS_CTRL);
@@ -1245,10 +1259,13 @@ int nvme_init_identify(struct nvme_ctrl *ctrl)
 		dev_err(ctrl->device, "Reading CAP failed (%d)\n", ret);
 		return ret;
 	}
+	/* OyTao: TODO */
 	page_shift = NVME_CAP_MPSMIN(cap) + 12;
 
+	/* OyTao: TODO */
 	if (ctrl->vs >= NVME_VS(1, 1, 0))
 		ctrl->subsystem = NVME_CAP_NSSRC(cap);
+
 
 	ret = nvme_identify_ctrl(ctrl, &id);
 	if (ret) {

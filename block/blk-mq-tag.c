@@ -70,6 +70,7 @@ static inline bool hctx_may_queue(struct blk_mq_hw_ctx *hctx,
 
 	if (!hctx || !(hctx->flags & BLK_MQ_F_TAG_SHARED))
 		return true;
+
 	if (!test_bit(BLK_MQ_S_TAG_ACTIVE, &hctx->state))
 		return true;
 
@@ -79,6 +80,7 @@ static inline bool hctx_may_queue(struct blk_mq_hw_ctx *hctx,
 	if (bt->sb.depth == 1)
 		return true;
 
+	/* OyTao: TODO */
 	users = atomic_read(&hctx->tags->active_queues);
 	if (!users)
 		return true;
@@ -86,10 +88,12 @@ static inline bool hctx_may_queue(struct blk_mq_hw_ctx *hctx,
 	/*
 	 * Allow at least some tags
 	 */
+	/* OyTao: 为什么每个users必须要保留至少4个 */
 	depth = max((bt->sb.depth + users - 1) / users, 4U);
 	return atomic_read(&hctx->nr_active) < depth;
 }
 
+/* OyTao: 获取sbitmap_queue中空闲资源的index, 并且已经置位 */
 static int __bt_get(struct blk_mq_hw_ctx *hctx, struct sbitmap_queue *bt)
 {
 	if (!hctx_may_queue(hctx, bt))
@@ -108,6 +112,7 @@ static int bt_get(struct blk_mq_alloc_data *data, struct sbitmap_queue *bt,
 	if (tag != -1)
 		return tag;
 
+	/* OyTao: 如果没有获取到相应的资源 如果设置wait，则pending TODO */
 	if (data->flags & BLK_MQ_REQ_NOWAIT)
 		return -1;
 
@@ -187,8 +192,10 @@ static unsigned int __blk_mq_get_reserved_tag(struct blk_mq_alloc_data *data)
 
 unsigned int blk_mq_get_tag(struct blk_mq_alloc_data *data)
 {
+	/* OyTao: TODO reserved request */
 	if (data->flags & BLK_MQ_REQ_RESERVED)
 		return __blk_mq_get_reserved_tag(data);
+
 	return __blk_mq_get_tag(data);
 }
 

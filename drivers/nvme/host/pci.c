@@ -1215,10 +1215,14 @@ static int nvme_alloc_admin_tags(struct nvme_dev *dev)
 		dev->admin_tagset.cmd_size = nvme_cmd_size(dev);
 		dev->admin_tagset.driver_data = dev;
 
-		/* OyTao: 分配tagset 以及 tags以及与预分配request */
+		/* OyTao: 分配tagset 以及 tags以及与预分配request资源 */
 		if (blk_mq_alloc_tag_set(&dev->admin_tagset))
 			return -ENOMEM;
 
+		/*
+		 * OyTao: 初始化admin request_queue,包含其中的sw_ctxs以及hw_ctxs,
+		 * 同时加入到tagset的taglist链表中。
+		 */
 		dev->ctrl.admin_q = blk_mq_init_queue(&dev->admin_tagset);
 		if (IS_ERR(dev->ctrl.admin_q)) {
 			blk_mq_free_tag_set(&dev->admin_tagset);
@@ -1239,7 +1243,7 @@ static int nvme_configure_admin_queue(struct nvme_dev *dev)
 {
 	int result;
 	u32 aqa;
-	/* OyTao: NVME  Cap寄存器 */
+	/* OyTao: NVME Cap寄存器 */
 	u64 cap = lo_hi_readq(dev->bar + NVME_REG_CAP);
 	struct nvme_queue *nvmeq;
 
@@ -1840,6 +1844,7 @@ static void nvme_reset_work(struct work_struct *work)
 	/* OyTao: 初始化admin queue一些域 */
 	nvme_init_queue(dev->queues[0], 0);
 
+	/* OyTao: 初始化request_queue以及tagset,支持multi-queue */
 	result = nvme_alloc_admin_tags(dev);
 	if (result)
 		goto out;

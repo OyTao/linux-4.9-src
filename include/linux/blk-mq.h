@@ -7,6 +7,7 @@
 struct blk_mq_tags;
 struct blk_flush_queue;
 
+/* OyTao: TODO */
 struct blk_mq_hw_ctx {
 	struct {
 		spinlock_t		lock;
@@ -43,6 +44,7 @@ struct blk_mq_hw_ctx {
 	unsigned int		numa_node;
 	unsigned int		queue_num;
 
+	/* OyTao: TODO */
 	atomic_t		nr_active;
 
 	struct delayed_work	delay_work;
@@ -58,17 +60,23 @@ struct blk_mq_hw_ctx {
 struct blk_mq_tag_set {
 	/* OyTao: cpu_id --> hw_queue_id */
 	unsigned int		*mq_map;
+
 	struct blk_mq_ops	*ops;
+
+	/* OyTao: hard queue的数目 */
 	unsigned int		nr_hw_queues;
 	unsigned int		queue_depth;	/* max hw supported */
+	/* OyTao: TODO */
 	unsigned int		reserved_tags;
+
 	unsigned int		cmd_size;	/* per-request extra data */
 	int			numa_node;
 	unsigned int		timeout;
 	unsigned int		flags;		/* BLK_MQ_F_* */
+
 	void			*driver_data;
 
-	/* OyTao: */ 
+	/* OyTao: 每一个hardware queue (blk_mq_hw_ctx),根据对应的hw_ctx的index索引 */ 
 	struct blk_mq_tags	**tags;
 
 	/* OyTao: request queue链在tag_list上 */

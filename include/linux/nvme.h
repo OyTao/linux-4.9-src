@@ -282,7 +282,11 @@ struct nvme_id_ns {
 	__u8			vs[3712];
 };
 
+/* 
+ * OyTao: CNS: Controller or Namespace Structure (CNS)
+ */
 enum {
+	/* OyTao: return Identify Namepsace data structure. */
 	NVME_ID_CNS_NS			= 0x00,
 	NVME_ID_CNS_CTRL		= 0x01,
 	NVME_ID_CNS_NS_ACTIVE_LIST	= 0x02,

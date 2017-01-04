@@ -148,8 +148,12 @@ static void blk_mq_rq_ctx_init(struct request_queue *q, struct blk_mq_ctx *ctx,
 	INIT_LIST_HEAD(&rq->queuelist);
 	/* csd/requeue_work/fifo_time is initialized before use */
 	rq->q = q;
+
+	/* OyTao: 设置software queue context */
 	rq->mq_ctx = ctx;
+
 	req_set_op_attrs(rq, op, op_flags);
+
 	/* do not touch atomic flags, it needs atomic ops against the timer */
 	rq->cpu = -1;
 	INIT_HLIST_NODE(&rq->hash);
@@ -184,6 +188,7 @@ static void blk_mq_rq_ctx_init(struct request_queue *q, struct blk_mq_ctx *ctx,
 	rq->end_io_data = NULL;
 	rq->next_rq = NULL;
 
+	/* OyTao: software queue dispatched request Numbers */
 	ctx->rq_dispatched[rw_is_sync(op, op_flags)]++;
 }
 
@@ -202,6 +207,7 @@ __blk_mq_alloc_request(struct blk_mq_alloc_data *data, int op, int op_flags)
 			atomic_inc(&data->hctx->nr_active);
 		}
 
+		/* 设置了request对应tag资源的index(@tag) */
 		rq->tag = tag;
 		blk_mq_rq_ctx_init(data->q, data->ctx, rq, op, op_flags);
 		return rq;
@@ -219,14 +225,20 @@ struct request *blk_mq_alloc_request(struct request_queue *q, int rw,
 	struct blk_mq_alloc_data alloc_data;
 	int ret;
 
+	/* OyTao: TODO */　
 	ret = blk_queue_enter(q, flags & BLK_MQ_REQ_NOWAIT);
 	if (ret)
 		return ERR_PTR(ret);
 
+	/* OyTao: 获取当前cpu上对应的software queue以及对应的hardware queue. */ 
 	ctx = blk_mq_get_ctx(q);
 	hctx = blk_mq_map_queue(q, ctx->cpu);
+
 	blk_mq_set_alloc_data(&alloc_data, q, flags, ctx, hctx);
+
 	rq = __blk_mq_alloc_request(&alloc_data, rw, 0);
+
+	/* OyTao: 在blk_mq_get_ctx中调用了get_cpu,禁止抢占, 这里enable */
 	blk_mq_put_ctx(ctx);
 
 	if (!rq) {
@@ -241,6 +253,7 @@ struct request *blk_mq_alloc_request(struct request_queue *q, int rw,
 }
 EXPORT_SYMBOL(blk_mq_alloc_request);
 
+/* OyTao: 与blk_mq_alloc_request类似，只不过是指定了特定的hardware queue */
 struct request *blk_mq_alloc_request_hctx(struct request_queue *q, int rw,
 		unsigned int flags, unsigned int hctx_idx)
 {
@@ -1206,10 +1219,14 @@ static struct request *blk_mq_map_request(struct request_queue *q,
 	int op_flags = 0;
 	struct blk_mq_alloc_data alloc_data;
 
+	/* OyTao: TODO　*/
 	blk_queue_enter_live(q);
+
+	/* OyTao: 得到当前cpu的software context以及对应的hardware context */
 	ctx = blk_mq_get_ctx(q);
 	hctx = blk_mq_map_queue(q, ctx->cpu);
 
+	/* OyTao: 如果是读或者sync write */
 	if (rw_is_sync(bio_op(bio), bio->bi_opf))
 		op_flags |= REQ_SYNC;
 
@@ -1760,6 +1777,12 @@ static void blk_mq_init_cpu_queues(struct request_queue *q,
 	}
 }
 
+/* 
+ * OyTao: 根据之前的映射的关系(tag_set->mq_map 或者q->mq_map），
+ * 将per-cpu的software context与对应的hardware context关联起来。
+ * sw_ctx->hw_index 为对应映射的hardware context index.
+ * hw_ctx[nr_ctx] = sw_ctx. 一个hardware context可能会对应多个software context.
+ */
 static void blk_mq_map_swqueue(struct request_queue *q,
 			       const struct cpumask *online_mask)
 {
@@ -1781,6 +1804,7 @@ static void blk_mq_map_swqueue(struct request_queue *q,
 	/*
 	 * Map software to hardware queues
 	 */
+	/* OyTao: 将software context与对应的hardware context绑定 */
 	for_each_possible_cpu(i) {
 		/* If the cpu isn't online, the cpu is mapped to first hctx */
 		if (!cpumask_test_cpu(i, online_mask))
@@ -1796,6 +1820,10 @@ static void blk_mq_map_swqueue(struct request_queue *q,
 
 	mutex_unlock(&q->sysfs_lock);
 
+	/* 
+	 * OyTao: 检查对应的hardware queue是否没有对应的software queue.
+	 * 如果没有，则删除对应blk_mq_tags资源。
+	 */
 	queue_for_each_hw_ctx(q, hctx, i) {
 		/*
 		 * If no software queues are mapped to this hardware queue,
@@ -1926,12 +1954,12 @@ struct request_queue *blk_mq_init_queue(struct blk_mq_tag_set *set)
 {
 	struct request_queue *uninit_q, *q;
 
-	/* OyTao: 分配一个rquest_queue对象 */
+	/* OyTao: 分配一个request_queue对象 */
 	uninit_q = blk_alloc_queue_node(GFP_KERNEL, set->numa_node);
 	if (!uninit_q)
 		return ERR_PTR(-ENOMEM);
 
-	/* OyTao: 初始化req_queue */
+	/* OyTao: 初始化multi-queue的req_queue */
 	q = blk_mq_init_allocated_queue(set, uninit_q);
 	if (IS_ERR(q))
 		blk_cleanup_queue(uninit_q);
@@ -2011,6 +2039,11 @@ static void blk_mq_realloc_hw_ctxs(struct blk_mq_tag_set *set,
  *        一个request_queue, per-cpu的 Software Context.(nr_cpus).
  *        同时会分配nr_cpus个hardware context(真实使用的个数<=nr_cpus,
  *        分配nr_cpus个，是避免后续hw_queues的个数变化)
+ *
+ * 此函数主要分配request_queue中的software context(queue_ctx)以及hardware 
+ * context(queue_hw_ctx),同时根据当时的cpu情况，以及req_queue->mq_map的信息，
+ * 将sw_ctx与hw_ctx绑定。hw_ctx与tag_set中的tags一一对应，可以根据对应的
+ * hardware context index获取对应的tag.
  */
 struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 						  struct request_queue *q)
@@ -2032,7 +2065,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	/* OyTao: cpu与hw_queue的对应关系 */
 	q->mq_map = set->mq_map;
 
-	/* 确保每一个hw_queue 都有一个 hardware context */
+	/* 确保每一个hw_queue 都有一个hardware context */
 	blk_mq_realloc_hw_ctxs(set, q);
 	if (!q->nr_hw_queues)
 		goto err_hctxs;
@@ -2073,6 +2106,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	/* OyTao: nr_hw_queues 真实的hw_queues数目 初始化sw context以及hw context.*/
 	blk_mq_init_cpu_queues(q, set->nr_hw_queues);
 
+	/* OyTao: 避免cpu hotplug操作 */
 	get_online_cpus();
 	mutex_lock(&all_q_mutex);
 
@@ -2080,9 +2114,15 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	 * OyTao: 
 	 * 将新生成的request queue挂在全局的@all_q_list.(all_q_mutex锁保护)
 	 * 同时将request加入到相应的tag set中。
+	 * 如果tagset中已经有了request queue,则表明hardware  context需要share.
+	 * 设置对应的flag.（具体shared的hw context的处理: TODO)
 	 */
 	list_add_tail(&q->all_q_node, &all_q_list);
 	blk_mq_add_queue_tag_set(set, q);
+
+	/* 
+	 * OyTao: 将software context与hardware context映射。
+	 */
 	blk_mq_map_swqueue(q, cpu_online_mask);
 
 	mutex_unlock(&all_q_mutex);

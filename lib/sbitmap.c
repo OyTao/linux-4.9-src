@@ -84,6 +84,8 @@ static int __sbitmap_get_word(struct sbitmap_word *word, unsigned int hint,
 	int nr;
 
 	while (1) {
+		
+		/* OyTao: 从当前的已分配的位置hint开始，向后查找没有分配的bit 0 */
 		nr = find_next_zero_bit(&word->word, word->depth, hint);
 		if (unlikely(nr >= word->depth)) {
 			/*
@@ -91,6 +93,7 @@ static int __sbitmap_get_word(struct sbitmap_word *word, unsigned int hint,
 			 * offset to 0 in a failure case, so start from 0 to
 			 * exhaust the map.
 			 */
+			/* OyTao: 如果是可以循环，则从0开始，再次查找 */
 			if (orig_hint && hint && wrap) {
 				hint = orig_hint = 0;
 				continue;
@@ -114,6 +117,7 @@ int sbitmap_get(struct sbitmap *sb, unsigned int alloc_hint, bool round_robin)
 	unsigned int i, index;
 	int nr = -1;
 
+	/* OyTao: 计算出第几个word (word_index) */
 	index = SB_NR_TO_INDEX(sb, alloc_hint);
 
 	for (i = 0; i < sb->map_nr; i++) {
@@ -244,17 +248,20 @@ void sbitmap_queue_resize(struct sbitmap_queue *sbq, unsigned int depth)
 }
 EXPORT_SYMBOL_GPL(sbitmap_queue_resize);
 
+/* OyTao: 从sbitmap_queue中分配空间的bit index  */
 int __sbitmap_queue_get(struct sbitmap_queue *sbq)
 {
 	unsigned int hint, depth;
 	int nr;
 
+	/* OyTao: 更新@alloc_hint */
 	hint = this_cpu_read(*sbq->alloc_hint);
 	depth = READ_ONCE(sbq->sb.depth);
 	if (unlikely(hint >= depth)) {
 		hint = depth ? prandom_u32() % depth : 0;
 		this_cpu_write(*sbq->alloc_hint, hint);
 	}
+	/* OyTao: 根据sbitmap获取空闲的index */
 	nr = sbitmap_get(&sbq->sb, hint, sbq->round_robin);
 
 	if (nr == -1) {

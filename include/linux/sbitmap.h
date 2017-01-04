@@ -231,7 +231,9 @@ static inline void sbitmap_for_each_set(struct sbitmap *sb, sb_for_each_fn fn,
 	}
 }
 
+/* OyTao: 根据@bitnr计算出@bitnr是属于第几个word */
 #define SB_NR_TO_INDEX(sb, bitnr) ((bitnr) >> (sb)->shift)
+/* OyTao: 根据@bitnr计算出在word中的第几个 */ 
 #define SB_NR_TO_BIT(sb, bitnr) ((bitnr) & ((1U << (sb)->shift) - 1U))
 
 static inline unsigned long *__sbitmap_word(struct sbitmap *sb,
