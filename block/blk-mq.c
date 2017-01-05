@@ -750,13 +750,16 @@ struct flush_busy_ctx_data {
 	struct list_head *list;
 };
 
+/* 从某一个software queue中获取所有的request */
 static bool flush_busy_ctx(struct sbitmap *sb, unsigned int bitnr, void *data)
 {
 	struct flush_busy_ctx_data *flush_data = data;
+	/* OyTao: 得到对应的hardware context 以及当前要flush的software queue */
 	struct blk_mq_hw_ctx *hctx = flush_data->hctx;
 	struct blk_mq_ctx *ctx = hctx->ctxs[bitnr];
 
 	sbitmap_clear_bit(sb, bitnr);
+	/* OyTao: 把当前的software queue的所有request加入到@list 中*/
 	spin_lock(&ctx->lock);
 	list_splice_tail_init(&ctx->rq_list, flush_data->list);
 	spin_unlock(&ctx->lock);
@@ -811,12 +814,17 @@ static void __blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx)
 	/*
 	 * Touch any software queue that has pending entries.
 	 */
+	/*
+	 * OyTao: 从hardware queue对应的所有的software queue中获取所有的reqs
+	 * 加入到@rq_list中
+	 */
 	flush_busy_ctxs(hctx, &rq_list);
 
 	/*
 	 * If we have previous entries on our dispatch list, grab them
 	 * and stuff them at the front for more fair dispatch.
 	 */
+	/* OyTao: 如果dispatch 链表不为空，则dispatch链表中的request加入到rq_list中 */
 	if (!list_empty_careful(&hctx->dispatch)) {
 		spin_lock(&hctx->lock);
 		if (!list_empty(&hctx->dispatch))
@@ -923,6 +931,11 @@ static int blk_mq_hctx_next_cpu(struct blk_mq_hw_ctx *hctx)
 	return hctx->next_cpu;
 }
 
+/*
+ * OyTao: process @hctx 上的request
+ * 1. 如果是同步的且hctx不是BLOCKING状态，则直接在当前上下文run 
+ * 2. 如果是async IO，则scheduler kworker run 
+ */
 void blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx, bool async)
 {
 	if (unlikely(test_bit(BLK_MQ_S_STOPPED, &hctx->state) ||
@@ -1039,6 +1052,7 @@ void blk_mq_delay_queue(struct blk_mq_hw_ctx *hctx, unsigned long msecs)
 }
 EXPORT_SYMBOL(blk_mq_delay_queue);
 
+/* OyTao: 插入request到software context中的rq_list */
 static inline void __blk_mq_insert_req_list(struct blk_mq_hw_ctx *hctx,
 					    struct request *rq,
 					    bool at_head)
@@ -1058,7 +1072,10 @@ static void __blk_mq_insert_request(struct blk_mq_hw_ctx *hctx,
 {
 	struct blk_mq_ctx *ctx = rq->mq_ctx;
 
+	/* OyTao: 将request插入到ctx的rq_list链表中 */
 	__blk_mq_insert_req_list(hctx, rq, at_head);
+
+	/* OyTao: 标记当前@hctx 有未执行的request */
 	blk_mq_hctx_mark_pending(hctx, ctx);
 }
 

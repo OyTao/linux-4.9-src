@@ -9,6 +9,7 @@ struct blk_flush_queue;
 
 /* OyTao: TODO */
 struct blk_mq_hw_ctx {
+	/* OyTao: TODO */
 	struct {
 		spinlock_t		lock;
 		struct list_head	dispatch;

@@ -64,11 +64,13 @@ void blk_execute_rq_nowait(struct request_queue *q, struct gendisk *bd_disk,
 	 * don't check dying flag for MQ because the request won't
 	 * be reused after dying flag is set
 	 */
+	/* OyTao: multi queue */
 	if (q->mq_ops) {
 		blk_mq_insert_request(rq, at_head, true, false);
 		return;
 	}
 
+	/* OyTao: single device queue */
 	spin_lock_irq(q->queue_lock);
 
 	if (unlikely(blk_queue_dying(q))) {
@@ -104,6 +106,7 @@ int blk_execute_rq(struct request_queue *q, struct gendisk *bd_disk,
 	int err = 0;
 	unsigned long hang_check;
 
+	/* OyTao: TODO */
 	if (!rq->sense) {
 		memset(sense, 0, sizeof(sense));
 		rq->sense = sense;

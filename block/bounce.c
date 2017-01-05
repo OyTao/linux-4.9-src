@@ -235,6 +235,7 @@ bounce:
 	*bio_orig = bio;
 }
 
+/* OyTao TODO */
 void blk_queue_bounce(struct request_queue *q, struct bio **bio_orig)
 {
 	mempool_t *pool;

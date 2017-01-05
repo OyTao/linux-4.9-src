@@ -723,6 +723,7 @@ int bio_add_pc_page(struct request_queue *q, struct bio *bio, struct page
 	if (unlikely(bio_flagged(bio, BIO_CLONED)))
 		return 0;
 
+	/* OyTao: 长度检查 */
 	if (((bio->bi_iter.bi_size + len) >> 9) > queue_max_hw_sectors(q))
 		return 0;
 
@@ -731,6 +732,8 @@ int bio_add_pc_page(struct request_queue *q, struct bio *bio, struct page
 	 * we will often be called with the same page as last time and
 	 * a consecutive offset.  Optimize this special case.
 	 */
+	/* OyTao: 如果当前的page与之前的prev_page是同一个page,并且offset连续，
+	 * 直接合并 */
 	if (bio->bi_vcnt > 0) {
 		struct bio_vec *prev = &bio->bi_io_vec[bio->bi_vcnt - 1];
 
@@ -745,10 +748,12 @@ int bio_add_pc_page(struct request_queue *q, struct bio *bio, struct page
 		 * If the queue doesn't support SG gaps and adding this
 		 * offset would create a gap, disallow it.
 		 */
+		/* OyTao: TODO */
 		if (bvec_gap_to_prev(q, prev, offset))
 			return 0;
 	}
 
+	/* OyTao: 检测vector cnt */
 	if (bio->bi_vcnt >= bio->bi_max_vecs)
 		return 0;
 
@@ -756,6 +761,7 @@ int bio_add_pc_page(struct request_queue *q, struct bio *bio, struct page
 	 * setup the new entry, we might clear it again later if we
 	 * cannot add the page
 	 */
+	/* OyTao: 将page,offset添加到bio vector中 */
 	bvec = &bio->bi_io_vec[bio->bi_vcnt];
 	bvec->bv_page = page;
 	bvec->bv_len = len;
@@ -769,6 +775,7 @@ int bio_add_pc_page(struct request_queue *q, struct bio *bio, struct page
 	 * than queue_max_segments(q).
 	 */
 
+	/* OyTao: TODO */
 	while (bio->bi_phys_segments > queue_max_segments(q)) {
 
 		if (retried_segments)

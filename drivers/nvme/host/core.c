@@ -358,6 +358,7 @@ int __nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 	struct request *req;
 	int ret;
 
+	/* OyTao: 分配request object */
 	req = nvme_alloc_request(q, cmd, flags, qid);
 	if (IS_ERR(req))
 		return PTR_ERR(req);
@@ -365,14 +366,17 @@ int __nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 	req->timeout = timeout ? timeout : ADMIN_TIMEOUT;
 	req->special = cqe;
 
+	/* OyTao: 将@buffer与bio中bi_vect关联 */
 	if (buffer && bufflen) {
 		ret = blk_rq_map_kern(q, req, buffer, bufflen, GFP_KERNEL);
 		if (ret)
 			goto out;
 	}
 
+	/* OyTao: TODO */
 	blk_execute_rq(req->q, NULL, req, at_head);
 	ret = req->errors;
+
  out:
 	blk_mq_free_request(req);
 	return ret;

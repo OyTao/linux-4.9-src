@@ -223,7 +223,10 @@ int blk_rq_map_kern(struct request_queue *q, struct request *rq, void *kbuf,
 	if (!len || !kbuf)
 		return -EINVAL;
 
+	/* OyTao: 如果@addr以及@len都不是dma对齐，则需要做copy */
 	do_copy = !blk_rq_aligned(q, addr, len) || object_is_on_stack(kbuf);
+
+	/* OyTao: 数据关联 */
 	if (do_copy)
 		bio = bio_copy_kern(q, kbuf, len, gfp_mask, reading);
 	else
@@ -238,6 +241,7 @@ int blk_rq_map_kern(struct request_queue *q, struct request *rq, void *kbuf,
 	if (do_copy)
 		rq->cmd_flags |= REQ_COPY_USER;
 
+	/* OyTao: TODO */
 	ret = blk_rq_append_bio(rq, bio);
 	if (unlikely(ret)) {
 		/* request is too big */
@@ -245,6 +249,7 @@ int blk_rq_map_kern(struct request_queue *q, struct request *rq, void *kbuf,
 		return ret;
 	}
 
+	/* OyTao: 如果设备需要数据必须在Low_Memory(DMA)区域，则需要重新分配数据 */
 	blk_queue_bounce(q, &rq->bio);
 	return 0;
 }

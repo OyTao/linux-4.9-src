@@ -609,6 +609,7 @@ static int nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	}
 
 	map_len = nvme_map_len(req);
+
 	ret = nvme_init_iod(req, map_len, dev);
 	if (ret)
 		return ret;
