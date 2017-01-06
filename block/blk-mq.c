@@ -438,6 +438,7 @@ void blk_mq_start_request(struct request *rq)
 	if (unlikely(blk_bidi_rq(rq)))
 		rq->next_rq->resid_len = blk_rq_bytes(rq->next_rq);
 
+	/* OyTao: TODO */
 	blk_add_timer(rq);
 
 	/*
@@ -1225,6 +1226,7 @@ struct blk_map_ctx {
 	struct blk_mq_ctx *ctx;
 };
 
+/* OyTao: 生成一个request */
 static struct request *blk_mq_map_request(struct request_queue *q,
 					  struct bio *bio,
 					  struct blk_map_ctx *data)
@@ -1416,6 +1418,7 @@ static blk_qc_t blk_sq_make_request(struct request_queue *q, struct bio *bio)
 	} else
 		request_count = blk_plug_queued_count(q);
 
+	/* OyTao: */ 
 	rq = blk_mq_map_request(q, bio, &data);
 	if (unlikely(!rq))
 		return BLK_QC_T_NONE;
@@ -1433,6 +1436,7 @@ static blk_qc_t blk_sq_make_request(struct request_queue *q, struct bio *bio)
 	 * utilize that to temporarily store requests until the task is
 	 * either done or scheduled away.
 	 */
+	/* OyTao: plug 机制 */
 	plug = current->plug;
 	if (plug) {
 		blk_mq_bio_to_request(rq, bio);

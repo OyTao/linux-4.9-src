@@ -359,6 +359,11 @@ static int blk_phys_contig_segment(struct request_queue *q, struct bio *bio,
 	return 0;
 }
 
+/* 
+ * OyTao: request中的bio,bio_vect只能描述一个page,
+ *        而sg是描述物理上连续一段内存，如果多个bio_vect是连续的page页（物理上
+ *        联系），则这个多个bio_vect可以对应一个sg.
+ */
 static inline void
 __blk_segment_map_sg(struct request_queue *q, struct bio_vec *bvec,
 		     struct scatterlist *sglist, struct bio_vec *bvprv,
@@ -453,9 +458,11 @@ int blk_rq_map_sg(struct request_queue *q, struct request *rq,
 	struct scatterlist *sg = NULL;
 	int nsegs = 0;
 
+	/* OyTao: 计算出sg的数目，同时sg指向最后一个sg */
 	if (rq->bio)
 		nsegs = __blk_bios_map_sg(q, rq->bio, sglist, &sg);
 
+	/* OyTao: 如果cmd是copy_user,需要考虑dma对齐的问题，如果不对齐，需要对齐 */
 	if (unlikely(rq->cmd_flags & REQ_COPY_USER) &&
 	    (blk_rq_bytes(rq) & q->dma_pad_mask)) {
 		unsigned int pad_len =
@@ -465,6 +472,7 @@ int blk_rq_map_sg(struct request_queue *q, struct request *rq,
 		rq->extra_len += pad_len;
 	}
 
+	/* OyTao: TODO */
 	if (q->dma_drain_size && q->dma_drain_needed(rq)) {
 		if (op_is_write(req_op(rq)))
 			memset(q->dma_drain_buffer, 0, q->dma_drain_size);

@@ -156,7 +156,10 @@ struct nvme_iod {
 	struct nvme_queue *nvmeq;
 	int aborted;
 	int npages;		/* In the PRP list. 0 means small pool in use */
+
+	/* OyTao: sg的个数 */
 	int nents;		/* Used in scatterlist */
+
 	int length;		/* Of data, in bytes */
 	dma_addr_t first_dma;
 	struct scatterlist meta_sg; /* metadata requires single contiguous buffer */
@@ -194,10 +197,16 @@ static inline void _nvme_check_size(void)
  * as it only leads to a small amount of wasted memory for the lifetime of
  * the I/O.
  */
+/* OyTao: 根据data size计算需要的prp个数，然后prp需要的page页数 */
 static int nvme_npages(unsigned size, struct nvme_dev *dev)
 {
+	/* OyTao: 计算size需要的prp数目 */
 	unsigned nprps = DIV_ROUND_UP(size + dev->ctrl.page_size,
 				      dev->ctrl.page_size);
+	/*
+	 * OyTao: 计算需要的page，每个page页最后一个8字节是存储下一个prp list的dma
+	 * 地址，所以这里是需要PAGE_SIZE - 8,每个prp list地址是8个字节。
+	 */
 	return DIV_ROUND_UP(8 * nprps, PAGE_SIZE - 8);
 }
 
@@ -300,6 +309,7 @@ static void __nvme_submit_cmd(struct nvme_queue *nvmeq,
 {
 	u16 tail = nvmeq->sq_tail;
 
+	/* OyTao: */
 	if (nvmeq->sq_cmds_io)
 		memcpy_toio(&nvmeq->sq_cmds_io[tail], cmd, sizeof(*cmd));
 	else
@@ -307,6 +317,8 @@ static void __nvme_submit_cmd(struct nvme_queue *nvmeq,
 
 	if (++tail == nvmeq->q_depth)
 		tail = 0;
+
+	/* OyTao: write nvme queue door bell */
 	writel(tail, nvmeq->q_db);
 	nvmeq->sq_tail = tail;
 }
@@ -323,11 +335,13 @@ static int nvme_init_iod(struct request *rq, unsigned size,
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(rq);
 	int nseg = rq->nr_phys_segments;
 
+	/* OyTao: 如果request超过2个物理page,则需要重新分配 */
 	if (nseg > NVME_INT_PAGES || size > NVME_INT_BYTES(dev)) {
 		iod->sg = kmalloc(nvme_iod_alloc_size(dev, size, nseg), GFP_ATOMIC);
 		if (!iod->sg)
 			return BLK_MQ_RQ_QUEUE_BUSY;
 	} else {
+		/* OyTao: 在nvmd_cmd中已经预先分配 */
 		iod->sg = iod->inline_sg;
 	}
 
@@ -362,6 +376,7 @@ static void nvme_free_iod(struct nvme_dev *dev, struct request *req)
 		prp_dma = next_prp_dma;
 	}
 
+	/* OyTao: 如果sg不等inline_sg,则表示sg数据大于 > 2,是额外分配的，需要释放*/
 	if (iod->sg != iod->inline_sg)
 		kfree(iod->sg);
 }
@@ -446,27 +461,37 @@ static bool nvme_setup_prps(struct nvme_dev *dev, struct request *req,
 	int offset = dma_addr & (page_size - 1);
 	__le64 *prp_list;
 	__le64 **list = iod_list(req);
+
 	dma_addr_t prp_dma;
 	int nprps, i;
 
+	/* OyTao: 如果一个page就可以包含所有的内容,返回true */
 	length -= (page_size - offset);
 	if (length <= 0)
 		return true;
 
 	dma_len -= (page_size - offset);
 	if (dma_len) {
+	/* OyTao: 如果第一个sg中的dma_len大于@page中剩余的空间 */
 		dma_addr += (page_size - offset);
 	} else {
+	/* OyTao: 此处dma_len == 0 */
 		sg = sg_next(sg);
 		dma_addr = sg_dma_address(sg);
 		dma_len = sg_dma_len(sg);
 	}
-
+	
+	/* OyTao: 如果两个page就可以包含所有的数据，则返回 */
 	if (length <= page_size) {
+		/* OyTao: @first_dma实际上是第二个dma_address */
 		iod->first_dma = dma_addr;
 		return true;
 	}
 
+	/* 
+	 * OyTao:每一个prp所占的字节数是8，如果所需要的nprp的地址空间 < 256,
+	 * 则从small pool中分配，否则使用large pool中分配
+	 */
 	nprps = DIV_ROUND_UP(length, page_size);
 	if (nprps <= (256 / 8)) {
 		pool = dev->prp_small_pool;
@@ -482,11 +507,23 @@ static bool nvme_setup_prps(struct nvme_dev *dev, struct request *req,
 		iod->npages = -1;
 		return false;
 	}
+
+	/* 
+	 * OyTao: @prp_dma是prp_list的dma地址 
+	 * 如果iod npages > 0
+	 * first_dma就是从Pool中分配的 prp_list的dma地址。 
+	 * 如果iod_npages < 0
+	 * first_dma > 0,则表示prp只有两项，first_dma是第二项的dma address.
+	 */
 	list[0] = prp_list;
 	iod->first_dma = prp_dma;
 	i = 0;
 	for (;;) {
 		if (i == page_size >> 3) {
+			/* 
+			 * OyTao: 如果一个prp超过一页，则在生成一个dma空间，用来存储prp.
+			 * 同时上一个prp_list的最后一项存储的是下一个prp dma地址。
+			 */
 			__le64 *old_prp_list = prp_list;
 			prp_list = dma_pool_alloc(pool, GFP_ATOMIC, &prp_dma);
 			if (!prp_list)
@@ -513,29 +550,37 @@ static bool nvme_setup_prps(struct nvme_dev *dev, struct request *req,
 	return true;
 }
 
+/* OyTao: 对于request后的nvme_iod赋值，包括sg，包括prp的分配，初始化 */
 static int nvme_map_data(struct nvme_dev *dev, struct request *req,
 		unsigned size, struct nvme_command *cmnd)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	struct request_queue *q = req->q;
+
 	enum dma_data_direction dma_dir = rq_data_dir(req) ?
 			DMA_TO_DEVICE : DMA_FROM_DEVICE;
 	int ret = BLK_MQ_RQ_QUEUE_ERROR;
 
 	sg_init_table(iod->sg, req->nr_phys_segments);
+
+	/* OyTao: 计算真实需要的sg数目 */ 
 	iod->nents = blk_rq_map_sg(q, req, iod->sg);
 	if (!iod->nents)
 		goto out;
 
+	/* OyTao:TODO */
 	ret = BLK_MQ_RQ_QUEUE_BUSY;
 	if (!dma_map_sg_attrs(dev->dev, iod->sg, iod->nents, dma_dir,
 				DMA_ATTR_NO_WARN))
 		goto out;
 
+	/* OyTao: 为request构建prp */
 	if (!nvme_setup_prps(dev, req, size))
 		goto out_unmap;
 
 	ret = BLK_MQ_RQ_QUEUE_ERROR;
+
+	/* OyTao: 需要处理meta_sg TODO */
 	if (blk_integrity_rq(req)) {
 		if (blk_rq_count_integrity_sg(q, req->bio) != 1)
 			goto out_unmap;
@@ -553,8 +598,10 @@ static int nvme_map_data(struct nvme_dev *dev, struct request *req,
 
 	cmnd->rw.dptr.prp1 = cpu_to_le64(sg_dma_address(iod->sg));
 	cmnd->rw.dptr.prp2 = cpu_to_le64(iod->first_dma);
+
 	if (blk_integrity_rq(req))
 		cmnd->rw.metadata = cpu_to_le64(sg_dma_address(&iod->meta_sg));
+
 	return BLK_MQ_RQ_QUEUE_OK;
 
 out_unmap:
@@ -587,8 +634,10 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 static int nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 			 const struct blk_mq_queue_data *bd)
 {
+	/* OyTao: TODO */
 	struct nvme_ns *ns = hctx->queue->queuedata;
 	struct nvme_queue *nvmeq = hctx->driver_data;
+
 	struct nvme_dev *dev = nvmeq->dev;
 	struct request *req = bd->rq;
 	struct nvme_command cmnd;
@@ -610,14 +659,18 @@ static int nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	map_len = nvme_map_len(req);
 
+	/* OyTao: 判断request之前预先分配的sg是否足够用，如果不足够需要额外分配 */
 	ret = nvme_init_iod(req, map_len, dev);
 	if (ret)
 		return ret;
 
+	/* OyTao: 初始化nvme_cmd */
 	ret = nvme_setup_cmd(ns, req, &cmnd);
 	if (ret)
 		goto out;
 
+
+	/* OyTao: nvme_iod根据request属性分配prp，初始化等操作 */
 	if (req->nr_phys_segments)
 		ret = nvme_map_data(dev, req, map_len, &cmnd);
 
@@ -628,6 +681,7 @@ static int nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	blk_mq_start_request(req);
 
 	spin_lock_irq(&nvmeq->q_lock);
+
 	if (unlikely(nvmeq->cq_vector < 0)) {
 		if (ns && !test_bit(NVME_NS_DEAD, &ns->flags))
 			ret = BLK_MQ_RQ_QUEUE_BUSY;
@@ -636,8 +690,11 @@ static int nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 		spin_unlock_irq(&nvmeq->q_lock);
 		goto out;
 	}
+
+	/* OyTao: 提交nvme cmd */
 	__nvme_submit_cmd(nvmeq, &cmnd);
 	nvme_process_cq(nvmeq);
+
 	spin_unlock_irq(&nvmeq->q_lock);
 	return BLK_MQ_RQ_QUEUE_OK;
 out:
@@ -682,6 +739,7 @@ static inline bool nvme_cqe_valid(struct nvme_queue *nvmeq, u16 head,
 	return (le16_to_cpu(nvmeq->cqes[head].status) & 1) == phase;
 }
 
+/* OyTao: 处理complete queue */
 static void __nvme_process_cq(struct nvme_queue *nvmeq, unsigned int *tag)
 {
 	u16 head, phase;
@@ -797,6 +855,7 @@ static void nvme_pci_submit_async_event(struct nvme_ctrl *ctrl, int aer_idx)
 
 	spin_lock_irq(&nvmeq->q_lock);
 	__nvme_submit_cmd(nvmeq, &c);
+	/* OyTao: plug 机制 */
 	spin_unlock_irq(&nvmeq->q_lock);
 }
 

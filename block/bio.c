@@ -1434,6 +1434,7 @@ struct bio *bio_map_kern(struct request_queue *q, void *data, unsigned int len,
 	int offset, i;
 	struct bio *bio;
 
+	/* OyTao: 分配bio */
 	bio = bio_kmalloc(gfp_mask, nr_pages);
 	if (!bio)
 		return ERR_PTR(-ENOMEM);
