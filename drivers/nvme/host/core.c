@@ -1682,15 +1682,19 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 	char disk_name[DISK_NAME_LEN];
 	int node = dev_to_node(ctrl->dev);
 
+	/* OyTao: 分配一个 object */
 	ns = kzalloc_node(sizeof(*ns), GFP_KERNEL, node);
 	if (!ns)
 		return;
 
+	/* OyTao: 得到一个ida索引号 */
 	ns->instance = ida_simple_get(&ctrl->ns_ida, 1, 0, GFP_KERNEL);
 	if (ns->instance < 0)
 		goto out_free_ns;
 
+	/* OyTao: 每一个namespace都一个request */
 	ns->queue = blk_mq_init_queue(ctrl->tagset);
+
 	if (IS_ERR(ns->queue))
 		goto out_release_instance;
 	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, ns->queue);
@@ -1710,6 +1714,7 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 		goto out_free_queue;
 
 	if (nvme_nvm_ns_supported(ns, id)) {
+		/* OyTao:TODO */
 		if (nvme_nvm_register(ns, disk_name, node,
 							&nvme_ns_attr_group)) {
 			dev_warn(ctrl->dev, "%s: LightNVM init failure\n",
@@ -1717,6 +1722,7 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 			goto out_free_id;
 		}
 	} else {
+		/* OyTao: 创建一个gendisk */
 		disk = alloc_disk_node(0, node);
 		if (!disk)
 			goto out_free_id;
@@ -1728,9 +1734,11 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 		memcpy(disk->disk_name, disk_name, DISK_NAME_LEN);
 		ns->disk = disk;
 
+		/* OyTao:　TODO  */
 		__nvme_revalidate_disk(disk, id);
 	}
 
+	/* OyTao: 将当前的@ns加入到namespaces链表中 */
 	mutex_lock(&ctrl->namespaces_mutex);
 	list_add_tail(&ns->list, &ctrl->namespaces);
 	mutex_unlock(&ctrl->namespaces_mutex);
@@ -1742,12 +1750,14 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 	if (ns->ndev)
 		return;
 
+	/* OyTao: TODO */
 	device_add_disk(ctrl->device, ns->disk);
 	if (sysfs_create_group(&disk_to_dev(ns->disk)->kobj,
 					&nvme_ns_attr_group))
 		pr_warn("%s: failed to create sysfs group for identification\n",
 			ns->disk->disk_name);
 	return;
+
  out_free_id:
 	kfree(id);
  out_free_queue:
@@ -1790,6 +1800,7 @@ static void nvme_validate_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 			nvme_ns_remove(ns);
 		nvme_put_ns(ns);
 	} else
+	  /* OyTao: 如果当前不存在@nsid，创建一个 */
 		nvme_alloc_ns(ctrl, nsid);
 }
 
@@ -1816,6 +1827,7 @@ static int nvme_scan_ns_list(struct nvme_ctrl *ctrl, unsigned nn)
 		return -ENOMEM;
 
 	for (i = 0; i < num_lists; i++) {
+		/* OyTao: NVME ACTIVE LIST  TODO */
 		ret = nvme_identify_ns_list(ctrl, prev, ns_list);
 		if (ret)
 			goto free;
@@ -1825,6 +1837,7 @@ static int nvme_scan_ns_list(struct nvme_ctrl *ctrl, unsigned nn)
 			if (!nsid)
 				goto out;
 
+			/* OyTao: nsid: namespace id */
 			nvme_validate_ns(ctrl, nsid);
 
 			while (++prev < nsid) {
@@ -1854,6 +1867,7 @@ static void nvme_scan_ns_sequential(struct nvme_ctrl *ctrl, unsigned nn)
 	nvme_remove_invalid_namespaces(ctrl, nn);
 }
 
+/* OyTao: */
 static void nvme_scan_work(struct work_struct *work)
 {
 	struct nvme_ctrl *ctrl =
@@ -1873,6 +1887,7 @@ static void nvme_scan_work(struct work_struct *work)
 		if (!nvme_scan_ns_list(ctrl, nn))
 			goto done;
 	}
+
 	nvme_scan_ns_sequential(ctrl, nn);
  done:
 	mutex_lock(&ctrl->namespaces_mutex);

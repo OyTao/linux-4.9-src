@@ -415,8 +415,10 @@ void blk_mq_complete_request(struct request *rq, int error)
 
 	if (unlikely(blk_should_fake_timeout(q)))
 		return;
+
 	if (!blk_mark_rq_complete(rq)) {
 		rq->errors = error;
+
 		__blk_mq_complete_request(rq);
 	}
 }
@@ -586,6 +588,7 @@ void blk_mq_abort_requeue_list(struct request_queue *q)
 }
 EXPORT_SYMBOL(blk_mq_abort_requeue_list);
 
+/* OyTao: 根据tag，获取对应的request */
 struct request *blk_mq_tag_to_rq(struct blk_mq_tags *tags, unsigned int tag)
 {
 	if (tag < tags->nr_tags) {

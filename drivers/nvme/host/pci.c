@@ -309,7 +309,7 @@ static void __nvme_submit_cmd(struct nvme_queue *nvmeq,
 {
 	u16 tail = nvmeq->sq_tail;
 
-	/* OyTao: */
+	/* OyTao: 如果是CMB模式 */
 	if (nvmeq->sq_cmds_io)
 		memcpy_toio(&nvmeq->sq_cmds_io[tail], cmd, sizeof(*cmd));
 	else
@@ -318,7 +318,7 @@ static void __nvme_submit_cmd(struct nvme_queue *nvmeq,
 	if (++tail == nvmeq->q_depth)
 		tail = 0;
 
-	/* OyTao: write nvme queue door bell */
+	/* OyTao: write nvme queue door bell 通知硬件 */
 	writel(tail, nvmeq->q_db);
 	nvmeq->sq_tail = tail;
 }
@@ -693,6 +693,8 @@ static int nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	/* OyTao: 提交nvme cmd */
 	__nvme_submit_cmd(nvmeq, &cmnd);
+
+	/* OyTao: nvme处理complete queue */
 	nvme_process_cq(nvmeq);
 
 	spin_unlock_irq(&nvmeq->q_lock);
@@ -751,6 +753,7 @@ static void __nvme_process_cq(struct nvme_queue *nvmeq, unsigned int *tag)
 		struct nvme_completion cqe = nvmeq->cqes[head];
 		struct request *req;
 
+		/* OyTao: 已经到达nvme complete queue的底部 */
 		if (++head == nvmeq->q_depth) {
 			head = 0;
 			phase = !phase;
@@ -778,9 +781,13 @@ static void __nvme_process_cq(struct nvme_queue *nvmeq, unsigned int *tag)
 			continue;
 		}
 
+		/* OyTao:获取对应的request */
 		req = blk_mq_tag_to_rq(*nvmeq->tags, cqe.command_id);
+
+		/* OyTao: TODO */
 		if (req->cmd_type == REQ_TYPE_DRV_PRIV && req->special)
 			memcpy(req->special, &cqe, sizeof(cqe));
+
 		blk_mq_complete_request(req, le16_to_cpu(cqe.status) >> 1);
 
 	}
@@ -1201,14 +1208,18 @@ static int nvme_create_queue(struct nvme_queue *nvmeq, int qid)
 	int result;
 
 	nvmeq->cq_vector = qid - 1;
+
+	/* OyTao: 同时device CQ */
 	result = adapter_alloc_cq(dev, qid, nvmeq);
 	if (result < 0)
 		return result;
 
+	/* OyTao: 通知device SQ  */
 	result = adapter_alloc_sq(dev, qid, nvmeq);
 	if (result < 0)
 		goto release_cq;
 
+	/* 注册中断 */
 	result = queue_request_irq(nvmeq);
 	if (result < 0)
 		goto release_sq;
@@ -1403,6 +1414,7 @@ static int nvme_create_io_queues(struct nvme_dev *dev)
 	unsigned i, max;
 	int ret = 0;
 
+	/* OyTao: 首先分配SQ/CQ */
 	for (i = dev->queue_count; i <= dev->max_qid; i++) {
 		if (!nvme_alloc_queue(dev, i, dev->q_depth)) {
 			ret = -ENOMEM;
@@ -1410,6 +1422,7 @@ static int nvme_create_io_queues(struct nvme_dev *dev)
 		}
 	}
 
+	/* OyTao: 通知device SQ/CQ, 注册中断 */
 	max = min(dev->max_qid, dev->queue_count - 1);
 	for (i = dev->online_queues; i <= max; i++) {
 		ret = nvme_create_queue(dev->queues[i], i);
@@ -1506,6 +1519,7 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	int result, nr_io_queues, size;
 
 	nr_io_queues = num_online_cpus();
+	/* OyTao: 下发feature (IO queues数目command） */
 	result = nvme_set_queue_count(&dev->ctrl, &nr_io_queues);
 	if (result < 0)
 		return result;
@@ -1513,6 +1527,7 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	if (nr_io_queues == 0)
 		return 0;
 
+	/* OyTao: 计算queue depth */
 	if (dev->cmb && NVME_CMB_SQS(dev->cmbsz)) {
 		result = nvme_cmb_qdepth(dev, nr_io_queues,
 				sizeof(struct nvme_command));
@@ -1545,6 +1560,9 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	 * setting up the full range we need.
 	 */
 	pci_free_irq_vectors(pdev);
+
+
+	/* OyTao: 为IO queues分配终端 */
 	nr_io_queues = pci_alloc_irq_vectors(pdev, 1, nr_io_queues,
 			PCI_IRQ_ALL_TYPES | PCI_IRQ_AFFINITY);
 	if (nr_io_queues <= 0)
@@ -1558,11 +1576,13 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 	 * number of interrupts.
 	 */
 
+	/* OyTao: TODO */
 	result = queue_request_irq(adminq);
 	if (result) {
 		adminq->cq_vector = -1;
 		return result;
 	}
+	/* OyTao: 创建IO SQ/CQ */
 	return nvme_create_io_queues(dev);
 }
 
@@ -1913,6 +1933,9 @@ static void nvme_reset_work(struct work_struct *work)
 	if (result)
 		goto out;
 
+	/* 
+	 * OyTao: 创立IO submission Queue以及Complete Queue
+	 */
 	result = nvme_setup_io_queues(dev);
 	if (result)
 		goto out;
