@@ -2792,6 +2792,7 @@ EXPORT_SYMBOL(generic_perform_write);
  */
 ssize_t __generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
+	/* OyTao: inode == file->f_inode */
 	struct file *file = iocb->ki_filp;
 	struct address_space * mapping = file->f_mapping;
 	struct inode 	*inode = mapping->host;
@@ -2805,6 +2806,7 @@ ssize_t __generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	if (err)
 		goto out;
 
+	/* OyTao:更新file的时间，也便于后续的writeback */
 	err = file_update_time(file);
 	if (err)
 		goto out;

@@ -98,6 +98,7 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	ssize_t ret;
 
 	inode_lock(inode);
+
 	ret = generic_write_checks(iocb, from);
 	if (ret <= 0)
 		goto out;
@@ -118,22 +119,34 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	 * If we have encountered a bitmap-format file, the size limit
 	 * is smaller than s_maxbytes, which is for extent-mapped files.
 	 */
+	/*
+	 * OyTao: ext4采用的是传统的块映射方式
+	 */
 	if (!(ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))) {
 		struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
 
+		/* OyTao: 检查写的位置是否超过最大文件限制 */
 		if (iocb->ki_pos >= sbi->s_bitmap_maxbytes) {
 			ret = -EFBIG;
 			goto out;
 		}
+
+		/* OyTao: 如果iov_iter中的count超过了能写的最大的count,修正count值。*/
 		iov_iter_truncate(from, sbi->s_bitmap_maxbytes - iocb->ki_pos);
 	}
 
 	iocb->private = &overwrite;
+	/* OyTao: Direct 写模式 */
 	if (o_direct) {
 		size_t length = iov_iter_count(from);
 		loff_t pos = iocb->ki_pos;
 
 		/* check whether we do a DIO overwrite or not */
+		/* 
+		 * OyTao 通常情况下，ext4会启动journal, ext4_should_dioread_nolock会
+		 * 返回0 
+		 *  ext4_map_blocks (TODO) 
+		 */
 		if (ext4_should_dioread_nolock(inode) && !unaligned_aio &&
 		    pos + length <= i_size_read(inode)) {
 			struct ext4_map_blocks map;

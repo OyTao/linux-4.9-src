@@ -451,6 +451,13 @@ static inline int ext4_should_writeback_data(struct inode *inode)
  * I/O completion handler, and this conflicts with the jbd's use of
  * b_private.
  */
+/* 
+ * OyTao: 
+ * 1) 只用于EXTENTS模式
+ * 2) 不开启journal模式（在journal模式下会占用b_private域
+ * 3) superblock设置了DIOREAD_NOLOCK标记
+ * 4) IS_REG (TODO)
+ */
 static inline int ext4_should_dioread_nolock(struct inode *inode)
 {
 	if (!test_opt(inode->i_sb, DIOREAD_NOLOCK))

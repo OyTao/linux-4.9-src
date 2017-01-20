@@ -133,6 +133,7 @@ struct bdi_writeback {
 #endif
 };
 
+/* OyTao: 用于writeback 模式 （缓存后刷数据） */
 struct backing_dev_info {
 	struct list_head bdi_list;
 	unsigned long ra_pages;	/* max readahead in PAGE_SIZE units */

@@ -323,6 +323,7 @@ struct writeback_control;
 #define IOCB_SYNC		(1 << 5)
 #define IOCB_WRITE		(1 << 6)
 
+/* OyTao: 异步IO操作的上下文 */
 struct kiocb {
 	struct file		*ki_filp;
 	loff_t			ki_pos;

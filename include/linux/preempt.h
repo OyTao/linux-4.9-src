@@ -142,6 +142,16 @@ extern void preempt_count_sub(int val);
 
 #ifdef CONFIG_PREEMPT_COUNT
 
+/* 
+ * OyTao:在修改preepmt count之后必须使用barrier,防止cpu乱序
+ * 通常在上锁之前，都需要关闭抢占（调用preempt_disable),
+ * 防止由于抢占之后，调度更高优先级的线程，导致死锁。
+ * 例子：
+ * process-1 获取锁
+ *    中断
+ *    中断返回调度更高优先级的process 2
+ * process-2 获取锁（无法获取到，此时process-1 无法继续执行，死锁）
+ */
 #define preempt_disable() \
 do { \
 	preempt_count_inc(); \
