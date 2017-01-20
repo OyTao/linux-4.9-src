@@ -253,13 +253,19 @@ struct cfs_bandwidth {
 
 /* task group related information */
 struct task_group {
+	/* OyTao: 内嵌该结构，可以通过container_of, 从task_struct找到该结构 */
 	struct cgroup_subsys_state css;
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
+	/* 
+	 * OyTao: 一个task_group中可能有不同的进程会运行在不同的CPU上，所以会预先为
+	 * 每个CPU分配一个sched_entity以及cfs_rq结构
+	 */
 	/* schedulable entities of this group on each cpu */
 	struct sched_entity **se;
 	/* runqueue "owned" by this group on each cpu */
 	struct cfs_rq **cfs_rq;
+
 	unsigned long shares;
 
 #ifdef	CONFIG_SMP
@@ -282,6 +288,7 @@ struct task_group {
 	struct rcu_head rcu;
 	struct list_head list;
 
+	/* OyTao: @parent, @siblings, @children构建task_group树形结构 */
 	struct task_group *parent;
 	struct list_head siblings;
 	struct list_head children;

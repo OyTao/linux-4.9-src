@@ -1335,10 +1335,16 @@ struct sched_statistics {
 };
 #endif
 
+/*
+ * OyTao: CPU 调度的实体 (可以是一个task,也可能是一组task)
+ * 该结构内嵌在task_struct结构中。
+ */
 struct sched_entity {
 	struct load_weight	load;		/* for load-balancing */
 	struct rb_node		run_node;
 	struct list_head	group_node;
+
+	/* OyTao:  该entity是否在run queue */
 	unsigned int		on_rq;
 
 	u64			exec_start;
@@ -1355,10 +1361,16 @@ struct sched_entity {
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	int			depth;
 	struct sched_entity	*parent;
+
+	/* 
+	 * OyTao: 如果@my_q == NULL, 则表示调度实体是一个task，
+	 * 否则表示的是一组task
+	 */
 	/* rq on which this entity is (to be) queued: */
 	struct cfs_rq		*cfs_rq;
 	/* rq "owned" by this entity/group: */
 	struct cfs_rq		*my_q;
+
 #endif
 
 #ifdef CONFIG_SMP
@@ -1785,12 +1797,15 @@ struct task_struct {
 	int cpuset_mem_spread_rotor;
 	int cpuset_slab_spread_rotor;
 #endif
+
 #ifdef CONFIG_CGROUPS
 	/* Control Group info protected by css_set_lock */
 	struct css_set __rcu *cgroups;
+
 	/* cg_list protected by css_set_lock and tsk->alloc_lock */
 	struct list_head cg_list;
 #endif
+
 #ifdef CONFIG_FUTEX
 	struct robust_list_head __user *robust_list;
 #ifdef CONFIG_COMPAT
