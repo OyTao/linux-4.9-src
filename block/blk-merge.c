@@ -188,6 +188,14 @@ split:
 	return do_split ? new : NULL;
 }
 
+/*
+ * OyTao:
+ * 在kernel4.3以前，会在make_request之前，对于queue limits做检查，一个IO
+ * 可能会生成多个bio。
+ * 在kernel4.3之后，generic_make_request之前，并不会考虑queue limits.
+ * 只会生成一个bio。对于queue limits,可以在各自的make request function内部
+ * 调用blk_queue_split
+ */ 
 void blk_queue_split(struct request_queue *q, struct bio **bio,
 		     struct bio_set *bs)
 {

@@ -9103,6 +9103,7 @@ __init void init_sched_fair_class(void)
 	nohz.next_balance = jiffies;
 	zalloc_cpumask_var(&nohz.idle_cpus_mask, GFP_NOWAIT);
 #endif
+
 #endif /* SMP */
 
 }

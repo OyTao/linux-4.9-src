@@ -1341,17 +1341,25 @@ struct sched_statistics {
  */
 struct sched_entity {
 	struct load_weight	load;		/* for load-balancing */
+
+	/* OyTao: 挂在cfq上的红黑树节点中 */
 	struct rb_node		run_node;
+
+	/* OyTao: 如果是在一个Group内，调度的是几个Group */
 	struct list_head	group_node;
 
 	/* OyTao:  该entity是否在run queue */
 	unsigned int		on_rq;
 
+	/* OyTao: 运行时间 */
 	u64			exec_start;
 	u64			sum_exec_runtime;
+
+	/* OyTao:　TODO　*/
 	u64			vruntime;
 	u64			prev_sum_exec_runtime;
 
+	/* OyTao: TODO  */
 	u64			nr_migrations;
 
 #ifdef CONFIG_SCHEDSTATS
@@ -1360,6 +1368,7 @@ struct sched_entity {
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	int			depth;
+	/* OyTao: TODO */
 	struct sched_entity	*parent;
 
 	/* 

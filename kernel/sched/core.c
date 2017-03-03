@@ -7499,6 +7499,7 @@ int in_sched_functions(unsigned long addr)
  * Default task group.
  * Every task in system belongs to this group at bootup.
  */
+/* OyTao: 默认的根task_group */
 struct task_group root_task_group;
 LIST_HEAD(task_groups);
 
@@ -7547,6 +7548,7 @@ void __init sched_init(void)
 		ptr += nr_cpu_ids * sizeof(void **);
 
 #endif /* CONFIG_FAIR_GROUP_SCHED */
+
 #ifdef CONFIG_RT_GROUP_SCHED
 		root_task_group.rt_se = (struct sched_rt_entity **)ptr;
 		ptr += nr_cpu_ids * sizeof(void **);
@@ -7556,6 +7558,7 @@ void __init sched_init(void)
 
 #endif /* CONFIG_RT_GROUP_SCHED */
 	}
+
 #ifdef CONFIG_CPUMASK_OFFSTACK
 	for_each_possible_cpu(i) {
 		per_cpu(load_balance_mask, i) = (cpumask_var_t)kzalloc_node(
@@ -7588,6 +7591,7 @@ void __init sched_init(void)
 	autogroup_init(&init_task);
 #endif /* CONFIG_CGROUP_SCHED */
 
+	/* OyTao: 对于每一个CPU,初始化其中的rq */
 	for_each_possible_cpu(i) {
 		struct rq *rq;
 
@@ -7599,6 +7603,7 @@ void __init sched_init(void)
 		init_cfs_rq(&rq->cfs);
 		init_rt_rq(&rq->rt);
 		init_dl_rq(&rq->dl);
+
 #ifdef CONFIG_FAIR_GROUP_SCHED
 		root_task_group.shares = ROOT_TASK_GROUP_LOAD;
 		INIT_LIST_HEAD(&rq->leaf_cfs_rq_list);
@@ -7624,6 +7629,7 @@ void __init sched_init(void)
 		init_cfs_bandwidth(&root_task_group.cfs_bandwidth);
 		init_tg_cfs_entry(&root_task_group, &rq->cfs, NULL, i, NULL);
 #endif /* CONFIG_FAIR_GROUP_SCHED */
+
 
 		rq->rt.rt_runtime = def_rt_bandwidth.rt_runtime;
 #ifdef CONFIG_RT_GROUP_SCHED
@@ -7688,6 +7694,8 @@ void __init sched_init(void)
 	idle_thread_set_boot_cpu();
 	set_cpu_rq_start_time(smp_processor_id());
 #endif
+
+	/* OyTao: TODO  */
 	init_sched_fair_class();
 
 	init_schedstats();
