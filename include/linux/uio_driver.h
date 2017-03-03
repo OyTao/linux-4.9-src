@@ -34,10 +34,24 @@ struct uio_map;
  */
 struct uio_mem {
 	const char		*name;
+	/*
+	 * OyTao: TODO (user space access)
+	 */
 	phys_addr_t		addr;
 	resource_size_t		size;
+	/* 
+	 * OyTao: 
+	 * 1) UIO_MEM_PHYS: 设备上的物理内存
+	 * 2) UIO_MEM_LOGICAL (kmalloc etc)
+	 * 3) UIO_MEM_VIRTUAL (vmalloc etc) 
+	 */
 	int			memtype;
+
+	/* 
+	 * OyTao: kernel internal access.
+	 */
 	void __iomem		*internal_addr;
+
 	struct uio_map		*map;
 };
 
@@ -58,6 +72,7 @@ struct uio_port {
 	unsigned long		start;
 	unsigned long		size;
 	int			porttype;
+
 	struct uio_portio	*portio;
 };
 
@@ -79,7 +94,7 @@ struct uio_device {
  * struct uio_info - UIO device capabilities
  * @uio_dev:		the UIO device this info belongs to
  * @name:		device name
- * @version:		device driver version
+ * @version:		device driver version (required)
  * @mem:		list of mappable memory regions, size==0 for end of list
  * @port:		list of port regions, size==0 for end of list
  * @irq:		interrupt number or UIO_IRQ_CUSTOM
@@ -95,15 +110,30 @@ struct uio_info {
 	struct uio_device	*uio_dev;
 	const char		*name;
 	const char		*version;
+
+	/* OyTao: 如果有部分内存需要通过mmap */
 	struct uio_mem		mem[MAX_UIO_MAPS];
+
+	/* OyTao: 如果需要在用户空间访问IOports */
 	struct uio_port		port[MAX_UIO_PORT_REGIONS];
+
+	/* OyTao: 如果对应的硬件产生irq, 需要设置 */
 	long			irq;
+
+	/* OyTao: request_irq的irq 参数 */
 	unsigned long		irq_flags;
 	void			*priv;
+
 	irqreturn_t (*handler)(int irq, struct uio_info *dev_info);
 	int (*mmap)(struct uio_info *info, struct vm_area_struct *vma);
 	int (*open)(struct uio_info *info, struct inode *inode);
 	int (*release)(struct uio_info *info, struct inode *inode);
+
+	/* 
+	 * OyTao: 如果需要在用户空间 enable/disable interrupts，需要实现.
+	 * irq_on = 0 disable interrupt
+	 * irq_on = 1 enable interrupt
+	 */
 	int (*irqcontrol)(struct uio_info *info, s32 irq_on);
 };
 
