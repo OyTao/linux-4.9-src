@@ -70,6 +70,9 @@ void chrdev_show(struct seq_file *f, off_t offset)
  *
  * Returns a -ve errno on failure.
  */
+/*
+ * OyTao: 找到合适的major，并且找到从@baseminor开始的@minorct个minor 号.
+ */
 static struct char_device_struct *
 __register_chrdev_region(unsigned int major, unsigned int baseminor,
 			   int minorct, const char *name)
@@ -78,6 +81,7 @@ __register_chrdev_region(unsigned int major, unsigned int baseminor,
 	int ret = 0;
 	int i;
 
+	/* OyTao: 分配 char_device_struct结构体 */
 	cd = kzalloc(sizeof(struct char_device_struct), GFP_KERNEL);
 	if (cd == NULL)
 		return ERR_PTR(-ENOMEM);
@@ -85,6 +89,7 @@ __register_chrdev_region(unsigned int major, unsigned int baseminor,
 	mutex_lock(&chrdevs_lock);
 
 	/* temporary */
+	/* OyTao: 如果major == 0, 在chrdev Hash中一个没有分配的major */
 	if (major == 0) {
 		for (i = ARRAY_SIZE(chrdevs)-1; i > 0; i--) {
 			if (chrdevs[i] == NULL)
@@ -99,6 +104,7 @@ __register_chrdev_region(unsigned int major, unsigned int baseminor,
 			ret = -EBUSY;
 			goto out;
 		}
+		
 		major = i;
 	}
 
@@ -120,6 +126,7 @@ __register_chrdev_region(unsigned int major, unsigned int baseminor,
 	if (*cp && (*cp)->major == major) {
 		int old_min = (*cp)->baseminor;
 		int old_max = (*cp)->baseminor + (*cp)->minorct - 1;
+
 		int new_min = baseminor;
 		int new_max = baseminor + minorct - 1;
 
@@ -251,10 +258,12 @@ int __register_chrdev(unsigned int major, unsigned int baseminor,
 	struct cdev *cdev;
 	int err = -ENOMEM;
 
+	/* OyTao: 拿到申请到的major, minor */
 	cd = __register_chrdev_region(major, baseminor, count, name);
 	if (IS_ERR(cd))
 		return PTR_ERR(cd);
 
+	/* OyTao: 分配cdev 结构体 */
 	cdev = cdev_alloc();
 	if (!cdev)
 		goto out2;
@@ -263,6 +272,7 @@ int __register_chrdev(unsigned int major, unsigned int baseminor,
 	cdev->ops = fops;
 	kobject_set_name(&cdev->kobj, "%s", name);
 
+	/* OyTao: add @cdev into System */
 	err = cdev_add(cdev, MKDEV(cd->major, baseminor), count);
 	if (err)
 		goto out;
@@ -461,6 +471,7 @@ int cdev_add(struct cdev *p, dev_t dev, unsigned count)
 	p->dev = dev;
 	p->count = count;
 
+	/* OyTao: TODO */
 	error = kobj_map(cdev_map, dev, count, NULL,
 			 exact_match, exact_lock, p);
 	if (error)

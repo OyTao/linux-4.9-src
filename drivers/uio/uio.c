@@ -434,6 +434,7 @@ static int uio_open(struct inode *inode, struct file *filep)
 	struct uio_listener *listener;
 	int ret = 0;
 
+	/* OyTao: 通过inoden到设备的minor, 然后再通过uio_idrn到对应的uio_device */
 	mutex_lock(&minor_lock);
 	idev = idr_find(&uio_idr, iminor(inode));
 	mutex_unlock(&minor_lock);
@@ -447,6 +448,7 @@ static int uio_open(struct inode *inode, struct file *filep)
 		goto out;
 	}
 
+	/* OyTao:Open操作时候，申请一个uio_listener */
 	listener = kmalloc(sizeof(*listener), GFP_KERNEL);
 	if (!listener) {
 		ret = -ENOMEM;
@@ -457,6 +459,7 @@ static int uio_open(struct inode *inode, struct file *filep)
 	listener->event_count = atomic_read(&idev->event);
 	filep->private_data = listener;
 
+	/* OyTao:执行用户设置的open函数 */
 	if (idev->info->open) {
 		ret = idev->info->open(idev->info, inode);
 		if (ret)
@@ -732,11 +735,14 @@ static int uio_major_init(void)
 	dev_t uio_dev = 0;
 	int result;
 
+	/* OyTao: 申请到major & minor */
 	result = alloc_chrdev_region(&uio_dev, 0, UIO_MAX_DEVICES, name);
 	if (result)
 		goto out;
 
 	result = -ENOMEM;
+
+	/* OyTao: 分配cdev结构 */
 	cdev = cdev_alloc();
 	if (!cdev)
 		goto out_unregister;
@@ -745,6 +751,7 @@ static int uio_major_init(void)
 	cdev->ops = &uio_fops;
 	kobject_set_name(&cdev->kobj, "%s", name);
 
+	/* OyTao: 注册@cdev到系统中 */
 	result = cdev_add(cdev, uio_dev, UIO_MAX_DEVICES);
 	if (result)
 		goto out_put;
@@ -802,6 +809,11 @@ static void release_uio_class(void)
  *
  * returns zero on success or a negative error code.
  */
+
+/*
+ * OyTao: 用户驱动的内核部分调用uio_register_device，往uio core中注册用户的
+ * uio_info 
+ */
 int __uio_register_device(struct module *owner,
 			  struct device *parent,
 			  struct uio_info *info)
@@ -814,6 +826,7 @@ int __uio_register_device(struct module *owner,
 
 	info->uio_dev = NULL;
 
+	/* OyTao: 分配uio_device结构 */
 	idev = devm_kzalloc(parent, sizeof(*idev), GFP_KERNEL);
 	if (!idev) {
 		return -ENOMEM;
@@ -824,10 +837,12 @@ int __uio_register_device(struct module *owner,
 	init_waitqueue_head(&idev->wait);
 	atomic_set(&idev->event, 0);
 
+	/* OyTao: 拿到minor,并且设置在idev中, t同时在idr中@idev与@minor关联 */
 	ret = uio_get_minor(idev);
 	if (ret)
 		return ret;
 
+	/* OyTao: 创建device,并且设置idev为private data */
 	idev->dev = device_create(&uio_class, parent,
 				  MKDEV(uio_major, idev->minor), idev,
 				  "uio%d", idev->minor);
@@ -845,6 +860,7 @@ int __uio_register_device(struct module *owner,
 
 	if (info->irq && (info->irq != UIO_IRQ_CUSTOM)) {
 		/*
+		 * OyTao: TODO
 		 * Note that we deliberately don't use devm_request_irq
 		 * here. The parent module can unregister the UIO device
 		 * and call pci_disable_msi, which requires that this
