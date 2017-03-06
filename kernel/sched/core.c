@@ -2004,6 +2004,9 @@ static void ttwu_queue(struct task_struct *p, int cpu, int wake_flags)
  * Return: %true if @p was woken up, %false if it was already running.
  * or @state didn't match @p's state.
  */
+ /*
+  * OyTao: TODO
+  */ 
 static int
 try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 {

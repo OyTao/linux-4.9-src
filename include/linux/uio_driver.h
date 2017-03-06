@@ -82,9 +82,14 @@ struct uio_device {
         struct module           *owner;
         struct device           *dev;
         int                     minor;
+
         atomic_t                event;
+
+		/* OyTao: 用来与用户程序进行异步通信 */
         struct fasync_struct    *async_queue;
+
         wait_queue_head_t       wait;
+
         struct uio_info         *info;
         struct kobject          *map_dir;
         struct kobject          *portio_dir;
@@ -133,6 +138,8 @@ struct uio_info {
 	 * OyTao: 如果需要在用户空间 enable/disable interrupts，需要实现.
 	 * irq_on = 0 disable interrupt
 	 * irq_on = 1 enable interrupt
+	 *
+	 * 同时也在uio_write中被调用。 TODO 
 	 */
 	int (*irqcontrol)(struct uio_info *info, s32 irq_on);
 };

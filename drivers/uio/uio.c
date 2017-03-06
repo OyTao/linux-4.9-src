@@ -397,6 +397,12 @@ static void uio_free_minor(struct uio_device *idev)
  * uio_event_notify - trigger an interrupt event
  * @info: UIO device capabilities
  */
+/*
+ * OyTao: 
+ * 1. 首先增加uio_device @idev中中断的次数。
+ * 2. wake_up uio_device @idev上的等待进程。
+ * 3. 发送SIGIO信号给通过faync绑定的用户程序。
+ */
 void uio_event_notify(struct uio_info *info)
 {
 	struct uio_device *idev = info->uio_dev;
@@ -411,6 +417,11 @@ EXPORT_SYMBOL_GPL(uio_event_notify);
  * uio_interrupt - hardware interrupt handler
  * @irq: IRQ number, can be UIO_IRQ_CYCLIC for cyclic timer
  * @dev_id: Pointer to the devices uio_device structure
+ */
+/*
+ * OyTao: uio core中断处理函数。
+ * 1. 首先调用用户注册的handle函数。
+ * 2. 调用uio_event_notify(event++ ，wake_up, kill_fasync)
  */
 static irqreturn_t uio_interrupt(int irq, void *dev_id)
 {
@@ -477,6 +488,10 @@ out:
 	return ret;
 }
 
+/*
+ * OyTao: 将调用的进程与@idev uio_device中的fasync_struct绑定。
+ * 实现异步通信。
+ */
 static int uio_fasync(int fd, struct file *filep, int on)
 {
 	struct uio_listener *listener = filep->private_data;
@@ -499,6 +514,9 @@ static int uio_release(struct inode *inode, struct file *filep)
 	return ret;
 }
 
+/*
+ * OyTao: 
+ */
 static unsigned int uio_poll(struct file *filep, poll_table *wait)
 {
 	struct uio_listener *listener = filep->private_data;
@@ -507,7 +525,13 @@ static unsigned int uio_poll(struct file *filep, poll_table *wait)
 	if (!idev->info->irq)
 		return -EIO;
 
+	/* OyTao: 将当前的进程加入到@idev的wait list中 */
 	poll_wait(filep, &idev->wait, wait);
+
+	/*
+	 * OyTao:如果两者中间的event中不一致，则说明uio_interrupt中调用了
+	 * uio_event_notify，增加了对应的event
+	 */
 	if (listener->event_count != atomic_read(&idev->event))
 		return POLLIN | POLLRDNORM;
 	return 0;
@@ -518,6 +542,7 @@ static ssize_t uio_read(struct file *filep, char __user *buf,
 {
 	struct uio_listener *listener = filep->private_data;
 	struct uio_device *idev = listener->dev;
+
 	DECLARE_WAITQUEUE(wait, current);
 	ssize_t retval;
 	s32 event_count;
@@ -534,7 +559,14 @@ static ssize_t uio_read(struct file *filep, char __user *buf,
 		set_current_state(TASK_INTERRUPTIBLE);
 
 		event_count = atomic_read(&idev->event);
+
+		/* 
+		 * OyTao: event_count不一致，则表示发生了uio_interrupt 
+		 * 则设置对应的进程状态为TASK_RUNNING,并且把新的event个数拷贝到用户的
+		 * buf中。
+		 */
 		if (event_count != listener->event_count) {
+
 			__set_current_state(TASK_RUNNING);
 			if (copy_to_user(buf, &event_count, count))
 				retval = -EFAULT;
@@ -545,6 +577,7 @@ static ssize_t uio_read(struct file *filep, char __user *buf,
 			break;
 		}
 
+		/* OyTao: 如果file设置了NONBLOCK则立即返回 */
 		if (filep->f_flags & O_NONBLOCK) {
 			retval = -EAGAIN;
 			break;
@@ -554,15 +587,22 @@ static ssize_t uio_read(struct file *filep, char __user *buf,
 			retval = -ERESTARTSYS;
 			break;
 		}
+
 		schedule();
 	} while (1);
 
+	/*
+	 * OyTao: 不管何种原因，当前进程可以继续执行。从wait list中remove 
+	 */
 	__set_current_state(TASK_RUNNING);
 	remove_wait_queue(&idev->wait, &wait);
 
 	return retval;
 }
 
+/*
+ * OyTao: 回调用户自己实现的irqcontrol param: @buf(irq_on)
+ */
 static ssize_t uio_write(struct file *filep, const char __user *buf,
 			size_t count, loff_t *ppos)
 {
@@ -580,14 +620,19 @@ static ssize_t uio_write(struct file *filep, const char __user *buf,
 	if (!idev->info->irqcontrol)
 		return -ENOSYS;
 
+	/* OyTao: 将@buf中的count拷贝到irq_on中 */
 	if (copy_from_user(&irq_on, buf, count))
 		return -EFAULT;
 
+	/* OyTao: 调用自己实现的irqcontrol函数 */
 	retval = idev->info->irqcontrol(idev->info, irq_on);
 
 	return retval ? retval : sizeof(s32);
 }
 
+/*
+ * OyTao: 返回vm_area在uio_info中对应的索引
+ */
 static int uio_find_mem_index(struct vm_area_struct *vma)
 {
 	struct uio_device *idev = vma->vm_private_data;
@@ -607,6 +652,9 @@ static int uio_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	unsigned long offset;
 	void *addr;
 
+	/*
+	 * OyTao: 根据@vma找到对应的
+	 */
 	int mi = uio_find_mem_index(vma);
 	if (mi < 0)
 		return VM_FAULT_SIGBUS;
@@ -618,6 +666,7 @@ static int uio_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	offset = (vmf->pgoff - mi) << PAGE_SHIFT;
 
 	addr = (void *)(unsigned long)idev->info->mem[mi].addr + offset;
+
 	if (idev->info->mem[mi].memtype == UIO_MEM_LOGICAL)
 		page = virt_to_page(addr);
 	else

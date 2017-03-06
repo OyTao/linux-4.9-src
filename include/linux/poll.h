@@ -72,6 +72,12 @@ static inline void init_poll_funcptr(poll_table *pt, poll_queue_proc qproc)
 	pt->_key   = ~0UL; /* all events enabled */
 }
 
+/*
+ * OyTao: 
+ * @filp: poll关注的fd
+ * @wait: 将current，以及后续的处理函数加入其中
+ * @wait_address: 等待的列表
+ */
 struct poll_table_entry {
 	struct file *filp;
 	unsigned long key;
@@ -81,6 +87,12 @@ struct poll_table_entry {
 
 /*
  * Structures and helpers for select/poll syscall
+ */
+/*
+ * OyTao: 每次系统select/poll调用，都会申请一个poll_wqueues结构。
+ * 1. pt是对外的接口。（是回调函数）
+ * 2. 如果对应的poll_table_entry超过了N_INLINE_POLL_ENTRIES则申请一个page
+ *	  用来存储新的entry。
  */
 struct poll_wqueues {
 	poll_table pt;

@@ -684,6 +684,25 @@ static int fasync_add_entry(int fd, struct file *filp, struct fasync_struct **fa
  * lease code. It returns negative on error, 0 if it did no changes
  * and positive if it added/deleted the entry.
  */
+
+/* OyTao:
+ * fasync: linux用户程序与内核程序之间的异步通信机制。
+ *
+ * 用户空间程序：									内核态
+ *	1) signal(SIGIO, sig_handler)
+ *     绑定SIGIO信号的处理程序
+ *
+ *  2) fcntl(fd, F_SETOWN, getpid())		-->		设置filep->f_owner
+ *		设置对于文件fd的所有者为当前进程
+ *
+ *	3) fcntl(fd, F_GETFL)					-->		执行filep fasync() 函数
+ *		进程,fd 与fasync_struct绑定
+ *
+ *	4) 收到SIGIO信号，执行sig_handler		<--		收到信号调用kill_fasync()
+ *
+ *
+ *	fasync 具体实现:TODO
+ */
 int fasync_helper(int fd, struct file * filp, int on, struct fasync_struct **fapp)
 {
 	if (!on)

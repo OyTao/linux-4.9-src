@@ -156,6 +156,10 @@ void poll_freewait(struct poll_wqueues *pwq)
 }
 EXPORT_SYMBOL(poll_freewait);
 
+/*
+ * OyTao: 找一个空闲的poll_table_entry.如果在inline中的还有空闲，则直接返回。
+ * 否则，申请new page.
+ */
 static struct poll_table_entry *poll_get_entry(struct poll_wqueues *p)
 {
 	struct poll_table_page *table = p->table;
@@ -183,6 +187,11 @@ static struct poll_table_entry *poll_get_entry(struct poll_wqueues *p)
 static int __pollwake(wait_queue_t *wait, unsigned mode, int sync, void *key)
 {
 	struct poll_wqueues *pwq = wait->private;
+
+	/*
+	 * OyTao: 在poll_initwait已经设置了polling_task位当时调用的进程o
+	 *
+	 */
 	DECLARE_WAITQUEUE(dummy_wait, pwq->polling_task);
 
 	/*
@@ -221,14 +230,21 @@ static void __pollwait(struct file *filp, wait_queue_head_t *wait_address,
 				poll_table *p)
 {
 	struct poll_wqueues *pwq = container_of(p, struct poll_wqueues, pt);
+
 	struct poll_table_entry *entry = poll_get_entry(pwq);
 	if (!entry)
 		return;
+
 	entry->filp = get_file(filp);
 	entry->wait_address = wait_address;
 	entry->key = p->_key;
+
 	init_waitqueue_func_entry(&entry->wait, pollwake);
+
+	/*OyTao: */
 	entry->wait.private = pwq;
+
+	/* OyTao: 将当前pwd加入@wait_address等待列表中 */
 	add_wait_queue(wait_address, &entry->wait);
 }
 
@@ -401,6 +417,9 @@ static inline void wait_key_set(poll_table *wait, unsigned long in,
 		wait->_key |= POLLOUT_SET;
 }
 
+/*
+ * OyTao: 每一次系统调用，都有一个poll_wqueues 结构
+ */
 int do_select(int n, fd_set_bits *fds, struct timespec64 *end_time)
 {
 	ktime_t expire, *to = NULL;
