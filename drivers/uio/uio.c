@@ -653,7 +653,7 @@ static int uio_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	void *addr;
 
 	/*
-	 * OyTao: 根据@vma找到对应的
+	 * OyTao: 根据@vma找到对应的mapped memory index
 	 */
 	int mi = uio_find_mem_index(vma);
 	if (mi < 0)
