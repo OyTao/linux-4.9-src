@@ -59,6 +59,9 @@ static int probe(struct pci_dev *pdev,
 	struct uio_pci_generic_dev *gdev;
 	int err;
 
+	/*
+	 * OyTao: enable pci device.
+	 */
 	err = pci_enable_device(pdev);
 	if (err) {
 		dev_err(&pdev->dev, "%s: pci_enable_device failed: %d\n",

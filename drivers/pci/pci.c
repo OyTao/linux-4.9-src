@@ -1321,6 +1321,9 @@ static int do_pci_enable_device(struct pci_dev *dev, int bars)
 
 	pci_fixup_device(pci_fixup_enable, dev);
 
+	/*
+	 * OyTao: 处理中断
+	 */
 	if (dev->msi_enabled || dev->msix_enabled)
 		return 0;
 
