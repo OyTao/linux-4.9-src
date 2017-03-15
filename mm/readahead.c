@@ -375,12 +375,17 @@ ondemand_readahead(struct address_space *mapping,
 	/*
 	 * start of file
 	 */
+	/* OyTao: 如果是从文件头开始读，则默认需要预读 */
 	if (!offset)
 		goto initial_readahead;
 
 	/*
 	 * It's the expected callback offset, assume sequential access.
 	 * Ramp up sizes, and push forward the readahead window.
+	 */
+
+	/*
+	 * OyTao: 如果是顺序读, 
 	 */
 	if ((offset == (ra->start + ra->size - ra->async_size) ||
 	     offset == (ra->start + ra->size))) {
@@ -444,7 +449,14 @@ ondemand_readahead(struct address_space *mapping,
 
 initial_readahead:
 	ra->start = offset;
+	/* OyTao: 根据@req_size计算size windows。
+	 * 首先按照@req_size向上取2的幂值，
+	 * 如果对应的new_size值 < max/32, 则new_size * 4
+	 * 如果对应的new_size < max/4  则new_size * 2
+	 */
 	ra->size = get_init_ra_size(req_size, max);
+
+	/* OyTao: @async_size是超过这次真实需要读数据的page页数 */
 	ra->async_size = ra->size > req_size ? ra->size - req_size : ra->size;
 
 readit:
@@ -452,6 +464,11 @@ readit:
 	 * Will this read hit the readahead marker made by itself?
 	 * If so, trigger the readahead marker hit now, and merge
 	 * the resulted next readahead window into the current one.
+	 */
+	/*
+	 * OyTao:如果当前需要预读的页面数@ra->size跟真实需要读的数据页面数是一致，
+	 * 则开启next 预读windows,根据当前的预读计算next readahead的size大小，
+	 * 同时与当前预读窗口合并 size += async_size.
 	 */
 	if (offset == ra->start && ra->size == ra->async_size) {
 		ra->async_size = get_next_ra_size(ra, max);
@@ -479,12 +496,15 @@ void page_cache_sync_readahead(struct address_space *mapping,
 			       struct file_ra_state *ra, struct file *filp,
 			       pgoff_t offset, unsigned long req_size)
 {
+	/* OyTao: 如果已经超出了预读的page windows */
 	/* no read-ahead */
 	if (!ra->ra_pages)
 		return;
 
 	/* be dumb */
+	/* OyTao: 如果file设置了RANDOM模式，则只预读req_size个page */
 	if (filp && (filp->f_mode & FMODE_RANDOM)) {
+		/* OyTao: TODO */
 		force_page_cache_readahead(mapping, filp, offset, req_size);
 		return;
 	}
@@ -516,7 +536,7 @@ page_cache_async_readahead(struct address_space *mapping,
 			   unsigned long req_size)
 {
 	/* no read-ahead */
-	if (!ra->ra_pages)
+	if (!ra->a_pages)
 		return;
 
 	/*

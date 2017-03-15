@@ -1086,14 +1086,35 @@ struct page *find_get_entry(struct address_space *mapping, pgoff_t offset)
 	void **pagep;
 	struct page *head, *page;
 
+	/*
+	 * OyTao: rcu_read_lock是保护radix tree中的radix_node在当前期间不被删除。
+	 * radix_tree在释放raidx_node时候，call_rcu()
+	 *
+	 * 读pagecache是无锁访问的。 
+	 * 针对pagecache的radix tree的add、delete是由tree_lock保护。
+	 *
+	 * 虽然radix_node在该访问期间能够保证不被释放，但是radix_node中的slot是可以
+	 * 被置空或者是存放其他page.
+	 */
 	rcu_read_lock();
 repeat:
 	page = NULL;
 	pagep = radix_tree_lookup_slot(&mapping->page_tree, offset);
 	if (pagep) {
+		/* OyTao: 拿到slot对应的page */
 		page = radix_tree_deref_slot(pagep);
 		if (unlikely(!page))
 			goto out;
+		
+		/*
+		 * OyTao:
+		 * 避免在radix tree删除最后一个node时后，radix_tree的root会直接=page.
+		 * 如果读操作是在删除之前，访问得到的一个radix_node;
+		 * 而radix tree shrink之后，page会被直接存储在root。而下次再删除这个page
+		 * 时候，并不会清空对应的radix_node中的slot,而是会直接设置root = NULL.
+		 * 而读线程还是拿着该radix_node, 会拿着一个已经释放的page.
+		 * 所以在shrink时候，会给该slot设置上标记。
+		 */
 		if (radix_tree_exception(page)) {
 			if (radix_tree_deref_retry(page))
 				goto repeat;
@@ -1105,11 +1126,19 @@ repeat:
 			goto out;
 		}
 
+		/*
+		 * OyTao:
+		 * 如果page的ref_count == 0, 需要repeat获取page. 
+		 * 如果page的ref_count > 0, +1.
+		 */
 		head = compound_head(page);
 		if (!page_cache_get_speculative(head))
 			goto repeat;
 
 		/* The page was split under us? */
+		/*
+		 * OyTao: TODO
+		 */
 		if (compound_head(page) != head) {
 			put_page(head);
 			goto repeat;
@@ -1119,6 +1148,10 @@ repeat:
 		 * Has the page moved?
 		 * This is part of the lockless pagecache protocol. See
 		 * include/linux/pagemap.h for details.
+		 */
+		/*
+		 * OyTao: 如果page已经被从pagecache中移除了，则还需要重新repeat,
+		 * 获取page.
 		 */
 		if (unlikely(page != *pagep)) {
 			put_page(head);
@@ -1742,6 +1775,8 @@ find_page:
 			if (unlikely(page == NULL))
 				goto no_cached_page;
 		}
+
+
 		if (PageReadahead(page)) {
 			page_cache_async_readahead(mapping,
 					ra, filp, page,
