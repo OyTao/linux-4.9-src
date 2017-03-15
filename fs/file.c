@@ -747,12 +747,14 @@ static unsigned long __fget_light(unsigned int fd, fmode_t mask)
 	struct files_struct *files = current->files;
 	struct file *file;
 
+	/* OyTao: 进程fd表共享，count > 1 */
 	if (atomic_read(&files->count) == 1) {
 		file = __fcheck_files(files, fd);
 		if (!file || unlikely(file->f_mode & mask))
 			return 0;
 		return (unsigned long)file;
 	} else {
+		/* OyTao: 共享的话需要rcu read lock */
 		file = __fget(fd, mask);
 		if (!file)
 			return 0;

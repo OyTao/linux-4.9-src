@@ -983,6 +983,11 @@ out:
 	return error;
 }
 
+/*
+ * OyTao: posix lock 冲突检测。
+ * 遍历inode上的所有的file_lock,检查owner和是否冲突.
+ * TODO
+ */
 static int posix_lock_inode(struct inode *inode, struct file_lock *request,
 			    struct file_lock *conflock)
 {
@@ -1289,6 +1294,9 @@ int locks_mandatory_locked(struct file *file)
  * @type:	%F_WRLCK for a write lock, else %F_RDLCK
  *
  * Searches the inode's list of locks to find any POSIX locks which conflict.
+ */
+/*
+ * OyTao: 检查文件锁是否有冲突，是否有死锁。
  */
 int locks_mandatory_area(struct inode *inode, struct file *filp, loff_t start,
 			 loff_t end, unsigned char type)

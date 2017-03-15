@@ -858,6 +858,9 @@ struct fown_struct {
 /*
  * Track a single file's readahead state
  */
+/*
+ * OyTao: 预读 TODO 
+ */
 struct file_ra_state {
 	pgoff_t start;			/* where readahead started */
 	unsigned int size;		/* # of readahead pages */
@@ -3028,6 +3031,12 @@ static inline bool io_is_direct(struct file *filp)
 	return (filp->f_flags & O_DIRECT) || IS_DAX(filp->f_mapping->host);
 }
 
+/*
+ * OyTao:从file中获取io control block flags.
+ *  APPEND, DIRECT, DSYNC, SYNC
+ *  DSYNC与SYNC的区别。
+ *  DSYNC (Data SYNC) TODO
+ */
 static inline int iocb_flags(struct file *file)
 {
 	int res = 0;

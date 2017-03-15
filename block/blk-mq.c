@@ -2089,7 +2089,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	/* OyTao: cpu与hw_queue的对应关系 */
 	q->mq_map = set->mq_map;
 
-	/* 确保每一个hw_queue 都有一个hardware context */
+	/* OyTao: 确保每一个hw_queue 都有一个hardware context */
 	blk_mq_realloc_hw_ctxs(set, q);
 	if (!q->nr_hw_queues)
 		goto err_hctxs;

@@ -418,6 +418,7 @@ void iov_iter_init(struct iov_iter *i, int direction,
 		i->type = direction;
 		i->iov = iov;
 	}
+
 	i->nr_segs = nr_segs;
 	i->iov_offset = 0;
 	i->count = count;

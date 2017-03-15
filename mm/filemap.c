@@ -1197,12 +1197,16 @@ struct page *pagecache_get_page(struct address_space *mapping, pgoff_t offset,
 	struct page *page;
 
 repeat:
+	/* OyTao: 在radix tree中对应的page */
 	page = find_get_entry(mapping, offset);
 	if (radix_tree_exceptional_entry(page))
 		page = NULL;
 	if (!page)
 		goto no_page;
 
+	/*
+	 * OyTao: FGP_LOCK, 需要对page加lock.
+	 */
 	if (fgp_flags & FGP_LOCK) {
 		if (fgp_flags & FGP_NOWAIT) {
 			if (!trylock_page(page)) {
@@ -1312,6 +1316,11 @@ repeat:
 			goto export;
 		}
 
+		/*
+		 * OyTao:
+		 * 如果page的ref_count == 0, 返回0，
+		 * 如果page的ref_count > 0, +1.
+		 */
 		head = compound_head(page);
 		if (!page_cache_get_speculative(head))
 			goto repeat;
@@ -1435,7 +1444,7 @@ unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t index,
 	radix_tree_for_each_contig(slot, &mapping->page_tree, &iter, index) {
 		struct page *head, *page;
 repeat:
-		page = radix_tree_deref_slot(slot);
+		page = gadix_tree_deref_slot(slot);
 		/* The hole, there no reason to continue */
 		if (unlikely(!page))
 			break;
@@ -1675,9 +1684,13 @@ static void shrink_readahead_size_eio(struct file *filp,
 static ssize_t do_generic_file_read(struct file *filp, loff_t *ppos,
 		struct iov_iter *iter, ssize_t written)
 {
+	/* OyTao: 获取inode的address_space */
 	struct address_space *mapping = filp->f_mapping;
 	struct inode *inode = mapping->host;
+
+	/* OyTao: 记录预读状态 */
 	struct file_ra_state *ra = &filp->f_ra;
+
 	pgoff_t index;
 	pgoff_t last_index;
 	pgoff_t prev_index;
@@ -1687,8 +1700,19 @@ static ssize_t do_generic_file_read(struct file *filp, loff_t *ppos,
 
 	if (unlikely(*ppos >= inode->i_sb->s_maxbytes))
 		return -EINVAL;
+
+	/*
+	 * OyTao: 检查@iter中的count是否超过了maxbytesize.(superblock中）
+	 */
 	iov_iter_truncate(iter, inode->i_sb->s_maxbytes);
 
+	/*
+	 * OyTao: @index: 当前读位置的page_idx, 
+	 *		  @last: 最后读的位置的page_idx,
+	 *		  @prev_idx: 预读的位置的page_idx
+	 *		  @prev_offset: 预读的offset
+	 *		  @offset: 当前读的位置的offset in page
+	 */
 	index = *ppos >> PAGE_SHIFT;
 	prev_index = ra->prev_pos >> PAGE_SHIFT;
 	prev_offset = ra->prev_pos & (PAGE_SIZE-1);
@@ -1701,8 +1725,14 @@ static ssize_t do_generic_file_read(struct file *filp, loff_t *ppos,
 		loff_t isize;
 		unsigned long nr, ret;
 
+		/* OyTao: 检查当前进程TIF_NEED_RESCHED，如果设置，需要执行调度*/
 		cond_resched();
+
 find_page:
+		/*
+		 * OyTao: 根据需要读的位置所在的page_idx @index在
+		 * pagecache中查找对应的数据
+		 */
 		page = find_get_page(mapping, index);
 		if (!page) {
 			page_cache_sync_readahead(mapping,
@@ -1922,11 +1952,15 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct file *file = iocb->ki_filp;
 	ssize_t retval = 0;
+
 	size_t count = iov_iter_count(iter);
 
 	if (!count)
 		goto out; /* skip atime */
 
+	/*
+	 * OyTao: direct IO (read)
+	 */
 	if (iocb->ki_flags & IOCB_DIRECT) {
 		struct address_space *mapping = file->f_mapping;
 		struct inode *inode = mapping->host;
@@ -1941,6 +1975,10 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 
 		file_accessed(file);
 
+		/*
+		 * OyTao: inode注册的address_space_operations 
+		 * (ext4, ext4_aops, inode.c)
+		 */
 		retval = mapping->a_ops->direct_IO(iocb, &data);
 		if (retval >= 0) {
 			iocb->ki_pos += retval;

@@ -404,10 +404,12 @@ int rw_verify_area(int read_write, struct file *file, const loff_t *ppos, size_t
 	loff_t pos;
 	int retval = -EINVAL;
 
+	/* OyTao: 拿到file对应的inode */
 	inode = file_inode(file);
 	if (unlikely((ssize_t) count < 0))
 		return retval;
 	pos = *ppos;
+
 	if (unlikely(pos < 0)) {
 		if (!unsigned_offsets(file))
 			return retval;
@@ -418,6 +420,9 @@ int rw_verify_area(int read_write, struct file *file, const loff_t *ppos, size_t
 			return retval;
 	}
 
+	/*
+	 * OyTao:检查file lock是否发生冲突.
+	 */
 	if (unlikely(inode->i_flctx && mandatory_lock(inode))) {
 		retval = locks_mandatory_area(inode, file, pos, pos + count - 1,
 				read_write == READ ? F_RDLCK : F_WRLCK);
@@ -435,8 +440,12 @@ static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, lo
 	struct iov_iter iter;
 	ssize_t ret;
 
+	/*
+	 * OyTao:初始化kiocb 包括对应处理的file,已经flags, position.
+	 */
 	init_sync_kiocb(&kiocb, filp);
 	kiocb.ki_pos = *ppos;
+
 	iov_iter_init(&iter, READ, &iov, 1, len);
 
 	ret = filp->f_op->read_iter(&kiocb, &iter);
@@ -461,6 +470,7 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
 	ssize_t ret;
 
+	/* OyTao: 检查文件的访问模式 */
 	if (!(file->f_mode & FMODE_READ))
 		return -EBADF;
 	if (!(file->f_mode & FMODE_CAN_READ))
@@ -468,10 +478,14 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 	if (unlikely(!access_ok(VERIFY_WRITE, buf, count)))
 		return -EFAULT;
 
+	/*
+	 * OyTao: 检测file lock, security, position
+	 */
 	ret = rw_verify_area(READ, file, pos, count);
 	if (!ret) {
 		if (count > MAX_RW_COUNT)
 			count =  MAX_RW_COUNT;
+
 		ret = __vfs_read(file, buf, count, pos);
 		if (ret > 0) {
 			fsnotify_access(file);
@@ -583,12 +597,16 @@ static inline void file_pos_write(struct file *file, loff_t pos)
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
+	/* OyTao: get file struct and flag */
 	struct fd f = fdget_pos(fd);
 	ssize_t ret = -EBADF;
 
 	if (f.file) {
+		/* OyTao: 拿到当前文件的所处的postion */
 		loff_t pos = file_pos_read(f.file);
+
 		ret = vfs_read(f.file, buf, count, &pos);
+
 		if (ret >= 0)
 			file_pos_write(f.file, pos);
 		fdput_pos(f);
@@ -920,6 +938,7 @@ static ssize_t do_readv(unsigned long fd, const struct iovec __user *vec,
 	ssize_t ret = -EBADF;
 
 	if (f.file) {
+		/* OyTao: 获取当前处理的位置 */
 		loff_t pos = file_pos_read(f.file);
 		ret = vfs_readv(f.file, vec, vlen, &pos, flags);
 		if (ret >= 0)

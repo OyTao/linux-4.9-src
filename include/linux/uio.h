@@ -31,12 +31,17 @@ struct iov_iter {
 	int type;
 	size_t iov_offset;
 	size_t count;
+
 	union {
 		const struct iovec *iov;
 		const struct kvec *kvec;
 		const struct bio_vec *bvec;
 		struct pipe_inode_info *pipe;
 	};
+
+	/*
+	 * OyTao: TODO 
+	 */
 	union {
 		unsigned long nr_segs;
 		int idx;
