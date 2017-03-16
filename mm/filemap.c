@@ -48,6 +48,9 @@
 #include <asm/mman.h>
 
 /*
+ * OyTao: TODO important
+ */
+/*
  * Shared mappings implemented 30.11.1994. It's not fully working yet,
  * though.
  *
@@ -653,6 +656,9 @@ int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
 }
 EXPORT_SYMBOL_GPL(replace_page_cache_page);
 
+/*
+ * OyTao: 0: success TODO
+ */
 static int __add_to_page_cache_locked(struct page *page,
 				      struct address_space *mapping,
 				      pgoff_t offset, gfp_t gfp_mask,
@@ -697,6 +703,7 @@ static int __add_to_page_cache_locked(struct page *page,
 		mem_cgroup_commit_charge(page, memcg, false, false);
 	trace_mm_filemap_add_to_page_cache(page);
 	return 0;
+
 err_insert:
 	page->mapping = NULL;
 	/* Leave page->index set: truncation relies upon it */
@@ -725,15 +732,26 @@ int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 }
 EXPORT_SYMBOL(add_to_page_cache_locked);
 
+
+/*
+ * OyTao: Lock page. 
+ * 1.page加入pagecache中(inc ref count)
+ * 2. 将其加入到lru中.(可能在@lru_add_pvec (inc ref), 也可能因为@lru_add_pvec,
+ *    整体的@lru_add_pvec移入到pglist_data的lru中. 再次dec ref)
+ */
 int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 				pgoff_t offset, gfp_t gfp_mask)
 {
 	void *shadow = NULL;
 	int ret;
 
+	/*
+	 * OyTao: 锁定page.然后将page加入到pagecache radix tree 中。
+	 */
 	__SetPageLocked(page);
 	ret = __add_to_page_cache_locked(page, mapping, offset,
 					 gfp_mask, &shadow);
+
 	if (unlikely(ret))
 		__ClearPageLocked(page);
 	else {
@@ -751,6 +769,13 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 			workingset_activation(page);
 		} else
 			ClearPageActive(page);
+
+		/*
+		 * OyTao: 将page首先加入per_cpu @lru_add_pvec中，
+		 * 如果@lru_add_pvec中已满，则加入到pglist_data的lru中。
+		 * page如果在@lru_add_pvec, inc ref count.
+		 * 如果加入@lru_add_pvec后移入到pglist_data对应类型的lru中，dec ref count.
+		 */
 		lru_cache_add(page);
 	}
 	return ret;
@@ -1076,10 +1101,15 @@ EXPORT_SYMBOL(page_cache_prev_hole);
  * Looks up the page cache slot at @mapping & @offset.  If there is a
  * page cache page, it is returned with an increased refcount.
  *
+ * OyTao: TODO 
  * If the slot holds a shadow entry of a previously evicted page, or a
  * swap entry from shmem/tmpfs, it is returned.
  *
  * Otherwise, %NULL is returned.
+ */
+
+/*
+ * OyTao: 在pagecache radix tree中查找对应的page，如果找到，则inc ref.返回。
  */
 struct page *find_get_entry(struct address_space *mapping, pgoff_t offset)
 {
@@ -1250,19 +1280,25 @@ repeat:
 			lock_page(page);
 		}
 
+		/* OyTao: 如果page已经重映射，不属于当前的inode TODO Why? */
 		/* Has the page been truncated? */
 		if (unlikely(page->mapping != mapping)) {
 			unlock_page(page);
 			put_page(page);
 			goto repeat;
 		}
+
 		VM_BUG_ON_PAGE(page->index != offset, page);
 	}
 
+	/* 
+	 * OyTao: TODO
+	 */
 	if (page && (fgp_flags & FGP_ACCESSED))
 		mark_page_accessed(page);
 
 no_page:
+	/* OyTao: 如果是Create标记，则创建新的page */
 	if (!page && (fgp_flags & FGP_CREAT)) {
 		int err;
 		if ((fgp_flags & FGP_WRITE) && mapping_cap_account_dirty(mapping))
@@ -1270,6 +1306,7 @@ no_page:
 		if (fgp_flags & FGP_NOFS)
 			gfp_mask &= ~__GFP_FS;
 
+		/* OyTao:分配一个新的page object */
 		page = __page_cache_alloc(gfp_mask);
 		if (!page)
 			return NULL;
@@ -1281,6 +1318,10 @@ no_page:
 		if (fgp_flags & FGP_ACCESSED)
 			__SetPageReferenced(page);
 
+		/*
+		 * OyTao: 添加新创建的page到pagecache中，并加入到per cpu的@lru_add_pvec,
+		 * 如果@lru_add_pvec已满，则加入到pglist_data中的lru中。
+		 */
 		err = add_to_page_cache_lru(page, mapping, offset,
 				gfp_mask & GFP_RECLAIM_MASK);
 		if (unlikely(err)) {

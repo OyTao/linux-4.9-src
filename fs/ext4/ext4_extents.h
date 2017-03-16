@@ -230,6 +230,7 @@ static inline ext4_fsblk_t ext4_ext_pblock(struct ext4_extent *ex)
  * ext4_idx_pblock:
  * combine low and high parts of a leaf physical block number into ext4_fsblk_t
  */
+/* OyTao: 根据对@ix中的低位于高位，算出物理对应的物理block idx */
 static inline ext4_fsblk_t ext4_idx_pblock(struct ext4_extent_idx *ix)
 {
 	ext4_fsblk_t block;

@@ -14,6 +14,10 @@
 #endif /* !__GENERATING_BOUNDS_H */
 
 /*
+ * OyTao: TODO page flags 
+ */
+
+/*
  * Various page->flags bits:
  *
  * PG_reserved is set for special pages, which can never be swapped out. Some

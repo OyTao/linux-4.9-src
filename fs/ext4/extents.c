@@ -739,6 +739,19 @@ void ext4_ext_drop_refs(struct ext4_ext_path *path)
  * binary search for the closest index of the given block
  * the header must be checked before calling this
  */
+
+/*
+ * OyTao: 在一个索引块或者是叶子块中进行二分查找。
+ * example:
+ * idx     0      1       2
+ *		|  0  |  100  |  400  |
+ *
+ * 第一个索引里对应的blk idx 是 [0 -- 100)
+ * 第二个索引里对应的blk idx 是 [100 -- 400)
+ * 第三个索引里对应的blk idx 是 [400 -- max]
+ *
+ * 所以在查找对应的blk所在的extent. 需要找到第一个比@block大的一项的前一项。
+ */
 static void
 ext4_ext_binsearch_idx(struct inode *inode,
 			struct ext4_ext_path *path, ext4_lblk_t block)
@@ -749,6 +762,10 @@ ext4_ext_binsearch_idx(struct inode *inode,
 
 	ext_debug("binsearch for %u(idx):  ", block);
 
+	/*
+	 * OyTao: @l是第二个ext4_extent_idx, @r是最后一个ext4_extent_idx.
+	 * 在@l和@r中第一个比block大的项
+	 */
 	l = EXT_FIRST_INDEX(eh) + 1;
 	r = EXT_LAST_INDEX(eh);
 	while (l <= r) {
@@ -762,6 +779,9 @@ ext4_ext_binsearch_idx(struct inode *inode,
 				r, le32_to_cpu(r->ei_block));
 	}
 
+	/*
+	 * OyTao: 真正的对应的index是第一个比block大的前一项。参考上面的实例 
+	 */
 	path->p_idx = l - 1;
 	ext_debug("  -> %u->%lld ", le32_to_cpu(path->p_idx->ei_block),
 		  ext4_idx_pblock(path->p_idx));
@@ -879,9 +899,16 @@ ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 	short int depth, i, ppos = 0;
 	int ret;
 
+	/*
+	 * OyTao: 首先拿到extent tree(B+ tree)的根节点
+	 */
 	eh = ext_inode_hdr(inode);
 	depth = ext_depth(inode);
 
+	/*
+	 * OyTao: @path是保存查找的过程. 查找之前，需要把@path中的路径全部清除掉。
+	 * 如果传入的@*orig_path的depth小于当前的@depth,则需要重新分配。
+	 */
 	if (path) {
 		ext4_ext_drop_refs(path);
 		if (depth > path[0].p_maxdepth) {
@@ -889,6 +916,10 @@ ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 			*orig_path = path = NULL;
 		}
 	}
+
+	/*
+	 * OyTao: 重新分配一个拥有(depth + 2)的path. TODO 
+	 */
 	if (!path) {
 		/* account possible depth increase */
 		path = kzalloc(sizeof(struct ext4_ext_path) * (depth + 2),
@@ -897,6 +928,8 @@ ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 			return ERR_PTR(-ENOMEM);
 		path[0].p_maxdepth = depth + 1;
 	}
+
+	/* OyTao: 路径的root node初始化 */
 	path[0].p_hdr = eh;
 	path[0].p_bh = NULL;
 
@@ -906,11 +939,15 @@ ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 		ext_debug("depth %d: num %d, max %d\n",
 			  ppos, le16_to_cpu(eh->eh_entries), le16_to_cpu(eh->eh_max));
 
+		/* OyTao: 在当前的索引块中查找对应的idx,存入对应的path->p_idx */
 		ext4_ext_binsearch_idx(inode, path + ppos, block);
+
+		/* OyTao: 得到对应下一级索引块的物理idx */
 		path[ppos].p_block = ext4_idx_pblock(path[ppos].p_idx);
 		path[ppos].p_depth = i;
 		path[ppos].p_ext = NULL;
 
+		/* OyTao: 从磁盘上读取下一层对应的节点(磁盘块) */
 		bh = read_extent_tree_block(inode, path[ppos].p_block, --i,
 					    flags);
 		if (IS_ERR(bh)) {
@@ -919,6 +956,7 @@ ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 		}
 
 		eh = ext_block_hdr(bh);
+
 		ppos++;
 		path[ppos].p_bh = bh;
 		path[ppos].p_hdr = eh;

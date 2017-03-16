@@ -594,6 +594,8 @@ extern struct page *mem_map;
  * per-zone basis.
  */
 struct bootmem_data;
+
+/* OyTao:真实的物理内存 */
 typedef struct pglist_data {
 	struct zone node_zones[MAX_NR_ZONES];
 	struct zonelist node_zonelists[MAX_ZONELISTS];

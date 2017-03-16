@@ -273,6 +273,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		} else
 			last_block_in_bio = blocks[blocks_per_page - 1];
 		goto next_page;
+
 	confused:
 		if (bio) {
 			submit_bio(bio);
@@ -282,10 +283,12 @@ int ext4_mpage_readpages(struct address_space *mapping,
 			block_read_full_page(page, ext4_get_block);
 		else
 			unlock_page(page);
+
 	next_page:
 		if (pages)
 			put_page(page);
 	}
+
 	BUG_ON(pages && !list_empty(pages));
 	if (bio)
 		submit_bio(bio);

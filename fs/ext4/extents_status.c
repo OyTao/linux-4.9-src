@@ -788,13 +788,22 @@ int ext4_es_lookup_extent(struct inode *inode, ext4_lblk_t lblk,
 	trace_ext4_es_lookup_extent_enter(inode, lblk);
 	es_debug("lookup extent in block %u\n", lblk);
 
+	/*
+	 * OyTao: 获取ext4 inode的extent status tree，y以及加读锁。
+	 */
 	tree = &EXT4_I(inode)->i_es_tree;
 	read_lock(&EXT4_I(inode)->i_es_lock);
 
 	/* find extent in cache firstly */
+	/*
+	 * OyTao: 
+	 * extent status tree中有一个缓存的extent,首先检查缓存
+	 */
 	es->es_lblk = es->es_len = es->es_pblk = 0;
+
 	if (tree->cache_es) {
 		es1 = tree->cache_es;
+		/* OyTao:如果需要寻找的logical block index是在@es_1范围内，则返回 */
 		if (in_range(lblk, es1->es_lblk, es1->es_len)) {
 			es_debug("%u cached by [%u/%u)\n",
 				 lblk, es1->es_lblk, es1->es_len);
@@ -803,6 +812,12 @@ int ext4_es_lookup_extent(struct inode *inode, ext4_lblk_t lblk,
 		}
 	}
 
+	/*
+	 * OyTao: 二叉树差查找。
+	 * 如果比节点的logical blk idx 小，则去左子树，
+	 * 如果比节点lbk+len大， 则去右子树；
+	 * 否则则找到。
+	 */
 	node = tree->root.rb_node;
 	while (node) {
 		es1 = rb_entry(node, struct extent_status, rb_node);
@@ -816,6 +831,10 @@ int ext4_es_lookup_extent(struct inode *inode, ext4_lblk_t lblk,
 		}
 	}
 
+
+	/*
+	 * OyTao: 如果found == 1, @es1, 包含要找的lblk的extent
+	 */
 out:
 	stats = &EXT4_SB(inode->i_sb)->s_es_stats;
 	if (found) {

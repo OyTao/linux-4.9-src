@@ -157,6 +157,9 @@ int __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 	LIST_HEAD(page_pool);
 	int page_idx;
 	int ret = 0;
+	/*
+	 * OyTao: @isize: inode->i_size.(byte) 检查是否读的page是否越界 
+	 */
 	loff_t isize = i_size_read(inode);
 	gfp_t gfp_mask = readahead_gfp_mask(mapping);
 
@@ -174,17 +177,34 @@ int __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 		if (page_offset > end_index)
 			break;
 
+		/*
+		 * OyTao: 分配page object之前，需要再次从pagecache中确认不存在，
+		 * 有可能其他进程已经把对应的page读取到pagecache中
+		 */
 		rcu_read_lock();
 		page = radix_tree_lookup(&mapping->page_tree, page_offset);
 		rcu_read_unlock();
 		if (page && !radix_tree_exceptional_entry(page))
 			continue;
 
+		/* OyTao:分配page object */
 		page = __page_cache_alloc(gfp_mask);
 		if (!page)
 			break;
+
+		/* OyTao:初始化page index,并且加入到这次预读申请的page list中*/
 		page->index = page_offset;
 		list_add(&page->lru, &page_pool);
+
+		/*
+		 * OyTao: 当分配第nr_to_read - lookahead_size page时候，设置该页面
+		 * 的PG_readahead标志位，已让下次进行异步预读
+		 **                        |<----- async_size ---------|
+		 *     |------------------- size -------------------->|
+		 *     |==================#===========================|
+		 *     ^start             ^page marked with PG_readahead
+		 * 参考ondemand_readahead design.
+		 */
 		if (page_idx == nr_to_read - lookahead_size)
 			SetPageReadahead(page);
 		ret++;
@@ -195,6 +215,7 @@ int __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 	 * uptodate then the caller will launch readpage again, and
 	 * will then handle the error.
 	 */
+	/* OyTao: 从磁盘上读取数据 */
 	if (ret)
 		read_pages(mapping, filp, &page_pool, ret, gfp_mask);
 	BUG_ON(!list_empty(&page_pool));
@@ -337,11 +358,17 @@ static int try_context_readahead(struct address_space *mapping,
 {
 	pgoff_t size;
 
+	/*
+	 * OyTao: 计算从当前page往前开始(offset-1.连续在pagecache中的page个数
+	 */
 	size = count_history_pages(mapping, offset, max);
 
 	/*
 	 * not enough history pages:
 	 * it could be a random read
+	 */
+	/*
+	 * OyTao:如果连续的page数目小于当前需要读的page数目，判定为随机读
 	 */
 	if (size <= req_size)
 		return 0;
@@ -385,7 +412,7 @@ ondemand_readahead(struct address_space *mapping,
 	 */
 
 	/*
-	 * OyTao: 如果是顺序读, 
+	 * OyTao: 如果是顺序读, 继续预读，同时扩大预读page数目
 	 */
 	if ((offset == (ra->start + ra->size - ra->async_size) ||
 	     offset == (ra->start + ra->size))) {
@@ -401,16 +428,26 @@ ondemand_readahead(struct address_space *mapping,
 	 * Query the pagecache for async_size, which normally equals to
 	 * readahead size. Ramp it up and use it as the new readahead size.
 	 */
+	/*
+	 * OyTao: TODO
+	 */
 	if (hit_readahead_marker) {
 		pgoff_t start;
 
+		/* @start,是从下一个offset+1page开始，连续在pagecache中最后第一个page */
 		rcu_read_lock();
 		start = page_cache_next_hole(mapping, offset + 1, max);
 		rcu_read_unlock();
 
+		/*
+		 * OyTao: 如果当前的offset与start之间距离超过max，则不预读.
+		 */
 		if (!start || start - offset > max)
 			return 0;
 
+		/* 
+		 * OyTao: 则从@start开始预读，TODO 
+		 */
 		ra->start = start;
 		ra->size = start - offset;	/* old async_size */
 		ra->size += req_size;
@@ -429,6 +466,9 @@ ondemand_readahead(struct address_space *mapping,
 	 * sequential cache miss
 	 * trivial case: (offset - prev_offset) == 1
 	 * unaligned reads: (offset - prev_offset) == 0
+	 */
+	/*
+	 * OyTao: TODO
 	 */
 	prev_offset = (unsigned long long)ra->prev_pos >> PAGE_SHIFT;
 	if (offset - prev_offset <= 1UL)
@@ -491,6 +531,10 @@ readit:
  * it will submit the read.  The readahead logic may decide to piggyback more
  * pages onto the read request if access patterns suggest it will improve
  * performance.
+ */
+
+/*
+ * OyTao: @offset:是page的index
  */
 void page_cache_sync_readahead(struct address_space *mapping,
 			       struct file_ra_state *ra, struct file *filp,

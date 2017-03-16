@@ -197,9 +197,12 @@ static void pagevec_lru_move_fn(struct pagevec *pvec,
 		lruvec = mem_cgroup_page_lruvec(page, pgdat);
 		(*move_fn)(page, lruvec, arg);
 	}
+
 	if (pgdat)
 		spin_unlock_irqrestore(&pgdat->lru_lock, flags);
+
 	release_pages(pvec->pages, pvec->nr, pvec->cold);
+
 	pagevec_reinit(pvec);
 }
 
@@ -377,24 +380,35 @@ void mark_page_accessed(struct page *page)
 			activate_page(page);
 		else
 			__lru_cache_activate_page(page);
+
 		ClearPageReferenced(page);
+
 		if (page_is_file_cache(page))
 			workingset_activation(page);
+
 	} else if (!PageReferenced(page)) {
 		SetPageReferenced(page);
 	}
+
 	if (page_is_idle(page))
 		clear_page_idle(page);
 }
 EXPORT_SYMBOL(mark_page_accessed);
 
+/*
+ * OyTao: 首先hold page.(inc ref count); 然后加入到当前的cpu的@lru_add_pvec
+ * 的变量中。如果@lru_add_pvec已满，则加入到pglist_data的lru,
+ * 同时清空@lru_add_pvec, 对其中的所有pages都要(dec ref count)
+ */
 static void __lru_cache_add(struct page *page)
 {
 	struct pagevec *pvec = &get_cpu_var(lru_add_pvec);
 
 	get_page(page);
+
 	if (!pagevec_add(pvec, page) || PageCompound(page))
 		__pagevec_lru_add(pvec);
+
 	put_cpu_var(lru_add_pvec);
 }
 
@@ -872,6 +886,10 @@ static void __pagevec_lru_add_fn(struct page *page, struct lruvec *lruvec,
 /*
  * Add the passed pages to the LRU, then drop the caller's refcount
  * on them.  Reinitialises the caller's pagevec.
+ */
+/*
+ * OyTao: 将@pvec中的所有pages加入到对应的pglist_data的lru.
+ * 同时对所有的pages dec refcount.然后重新初始化@pvec.
  */
 void __pagevec_lru_add(struct pagevec *pvec)
 {

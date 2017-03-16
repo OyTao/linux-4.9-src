@@ -41,6 +41,14 @@ enum {
 #define ES_SHIFT (sizeof(ext4_fsblk_t)*8 - ES_FLAGS)
 #define ES_MASK (~((ext4_fsblk_t)0) << ES_SHIFT)
 
+/*
+ * OyTao: ess status node 状态。TODO
+ * 1) written:
+ * 2) unwritten:
+ * 3) delayed:
+ * 4) hole:
+ * 5) referenced:
+ */
 #define EXTENT_STATUS_WRITTEN	(1 << ES_WRITTEN_B)
 #define EXTENT_STATUS_UNWRITTEN (1 << ES_UNWRITTEN_B)
 #define EXTENT_STATUS_DELAYED	(1 << ES_DELAYED_B)
@@ -55,6 +63,12 @@ enum {
 struct ext4_sb_info;
 struct ext4_extent;
 
+/*
+ * OyTao: ext4 extent status tree中的节点（只在内存中)
+ * @es_lblk: 该extent对应的start lblk indx.
+ * @es_len: 该extent包含的连续的block长度。
+ * @es_pblk: 该extent第一个lblk对应的物理block idx
+ */
 struct extent_status {
 	struct rb_node rb_node;
 	ext4_lblk_t es_lblk;	/* first logical block extent covers */

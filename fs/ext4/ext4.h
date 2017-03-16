@@ -173,7 +173,14 @@ struct ext4_allocation_request {
 				 EXT4_MAP_UNWRITTEN | EXT4_MAP_BOUNDARY)
 
 struct ext4_map_blocks {
+	/*
+	 * OyTao: physical block index. 物理磁盘上对应的block index. 
+	 */
 	ext4_fsblk_t m_pblk;
+
+	/*
+	 * OyTao: logical block index. 与某一个文件相关
+	 */
 	ext4_lblk_t m_lblk;
 	unsigned int m_len;
 	unsigned int m_flags;
@@ -712,6 +719,7 @@ struct ext4_inode {
 	__le16	i_links_count;	/* Links count */
 	__le32	i_blocks_lo;	/* Blocks count */
 	__le32	i_flags;	/* File flags */
+
 	union {
 		struct {
 			__le32  l_i_version;
@@ -723,11 +731,17 @@ struct ext4_inode {
 			__u32  m_i_reserved1;
 		} masix1;
 	} osd1;				/* OS dependent 1 */
+
 	__le32	i_block[EXT4_N_BLOCKS];/* Pointers to blocks */
+
 	__le32	i_generation;	/* File version (for NFS) */
+
 	__le32	i_file_acl_lo;	/* File ACL */
+
 	__le32	i_size_high;
+
 	__le32	i_obso_faddr;	/* Obsoleted fragment address */
+
 	union {
 		struct {
 			__le16	l_i_blocks_high; /* were l_i_reserved1 */
@@ -750,6 +764,7 @@ struct ext4_inode {
 			__u32	m_i_reserved2[2];
 		} masix2;
 	} osd2;				/* OS dependent 2 */
+
 	__le16	i_extra_isize;
 	__le16	i_checksum_hi;	/* crc32c(uuid+inum+inode) BE */
 	__le32  i_ctime_extra;  /* extra Change time      (nsec << 2 | epoch) */
@@ -938,6 +953,9 @@ enum {
  * fourth extended file system inode data in memory
  */
 struct ext4_inode_info {
+	/*
+	 * OyTao: TODO
+	 */
 	__le32	i_data[15];	/* unconverted */
 	__u32	i_dtime;
 	ext4_fsblk_t	i_file_acl;
@@ -994,6 +1012,9 @@ struct ext4_inode_info {
 	 * during recovery.  Hence we must fix the get_block-vs-truncate race
 	 * by other means, so we have i_data_sem.
 	 */
+	/*
+	 * OyTao: TODO
+	 */
 	struct rw_semaphore i_data_sem;
 	/*
 	 * i_mmap_sem is for serializing page faults with truncate / punch hole
@@ -1019,9 +1040,14 @@ struct ext4_inode_info {
 	struct list_head i_prealloc_list;
 	spinlock_t i_prealloc_lock;
 
+	/*
+	 * OyTao: ext4 inode, extent status tree是红黑树，
+	 * 由i_es_lock读写锁保护
+	 */
 	/* extents status tree */
 	struct ext4_es_tree i_es_tree;
 	rwlock_t i_es_lock;
+
 	struct list_head i_es_list;
 	unsigned int i_es_all_nr;	/* protected by i_es_lock */
 	unsigned int i_es_shk_nr;	/* protected by i_es_lock */

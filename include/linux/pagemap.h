@@ -258,6 +258,9 @@ static inline struct page *find_get_page(struct address_space *mapping,
 	return pagecache_get_page(mapping, offset, 0, 0);
 }
 
+/*
+ * 从pagecache中查找对应的page.(有可能是刚创建的新page)
+ */
 static inline struct page *find_get_page_flags(struct address_space *mapping,
 					pgoff_t offset, int fgp_flags)
 {

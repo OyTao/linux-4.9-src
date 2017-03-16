@@ -208,14 +208,25 @@ __find_get_block_slow(struct block_device *bdev, sector_t block)
 	struct page *page;
 	int all_mapped = 1;
 
+	/*
+	 * OyTao: 根据block，计算对应的page index @index. 然后在对应的page cache
+	 * 中查找对应的page (inc ref)
+	 */
 	index = block >> (PAGE_SHIFT - bd_inode->i_blkbits);
 	page = find_get_page_flags(bd_mapping, index, FGP_ACCESSED);
 	if (!page)
 		goto out;
 
+	/*
+	 * OyTao: why lock private_lock TODO */
 	spin_lock(&bd_mapping->private_lock);
 	if (!page_has_buffers(page))
 		goto out_unlock;
+
+	/*
+	 * OyTao: page中有对应的data buffer, 循环遍历该page所有的buffer head,
+	 * 如果找到对应的block的buffer_head,返回。否则继续。
+	 */
 	head = page_buffers(page);
 	bh = head;
 	do {
@@ -244,8 +255,11 @@ __find_get_block_slow(struct block_device *bdev, sector_t block)
 		printk("device %pg blocksize: %d\n", bdev,
 			1 << bd_inode->i_blkbits);
 	}
+
 out_unlock:
 	spin_unlock(&bd_mapping->private_lock);
+
+	/* OyTao: 在pagecache中找到了page, inc ref.所以这里需要dec ref count */
 	put_page(page);
 out:
 	return ret;
@@ -1315,6 +1329,10 @@ static void bh_lru_install(struct buffer_head *bh)
 /*
  * Look up the bh in this cpu's LRU.  If it's there, move it to the head.
  */
+/*
+ * OyTao: 在当前的CPU buffer_head LRU list中查找对应的block，如果查找到，
+ * 将其放在第一个，同时hold住(increase refcount of buffer_head)
+ */
 static struct buffer_head *
 lookup_bh_lru(struct block_device *bdev, sector_t block, unsigned size)
 {
@@ -1322,10 +1340,15 @@ lookup_bh_lru(struct block_device *bdev, sector_t block, unsigned size)
 	unsigned int i;
 
 	check_irqs_on();
+	/* OyTao: 关闭local irq, 然后查询当前的cpu lru list */
 	bh_lru_lock();
 	for (i = 0; i < BH_LRU_SIZE; i++) {
 		struct buffer_head *bh = __this_cpu_read(bh_lrus.bhs[i]);
 
+		/* 
+		 * OyTao: 如果在当前的CPU LRU buffer_head中找到对应的block,
+		 * 如果不是第一项，则将排在第一项。
+		 */
 		if (bh && bh->b_blocknr == block && bh->b_bdev == bdev &&
 		    bh->b_size == size) {
 			if (i) {
@@ -1336,12 +1359,15 @@ lookup_bh_lru(struct block_device *bdev, sector_t block, unsigned size)
 				}
 				__this_cpu_write(bh_lrus.bhs[0], bh);
 			}
+
+			/* OyTao: hold找到的buffer_head */
 			get_bh(bh);
 			ret = bh;
 			break;
 		}
 	}
 	bh_lru_unlock();
+
 	return ret;
 }
 
@@ -1353,6 +1379,7 @@ lookup_bh_lru(struct block_device *bdev, sector_t block, unsigned size)
 struct buffer_head *
 __find_get_block(struct block_device *bdev, sector_t block, unsigned size)
 {
+	/* OyTao: 首先在当前CPU buffer_head LRU 山查找 */
 	struct buffer_head *bh = lookup_bh_lru(bdev, block, size);
 
 	if (bh == NULL) {
@@ -1375,10 +1402,14 @@ EXPORT_SYMBOL(__find_get_block);
  * __getblk_gfp() will lock up the machine if grow_dev_page's
  * try_to_free_buffers() attempt is failing.  FIXME, perhaps?
  */
+/*
+ * OyTao: 读取数据块的过程 TODO
+ */
 struct buffer_head *
 __getblk_gfp(struct block_device *bdev, sector_t block,
 	     unsigned size, gfp_t gfp)
 {
+
 	struct buffer_head *bh = __find_get_block(bdev, block, size);
 
 	might_sleep();

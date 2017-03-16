@@ -61,7 +61,11 @@ typedef void (bh_end_io_t)(struct buffer_head *bh, int uptodate);
  */
 struct buffer_head {
 	unsigned long b_state;		/* buffer state bitmap (see above) */
+
+	/* OyTao: 在同一个page中的 next buffer_head */
 	struct buffer_head *b_this_page;/* circular list of page's buffers */
+
+	/* OyTao: 指向对应的page */
 	struct page *b_page;		/* the page this bh is mapped to */
 
 	sector_t b_blocknr;		/* start block number */

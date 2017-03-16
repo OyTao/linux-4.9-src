@@ -471,6 +471,10 @@ static void ext4_map_blocks_es_recheck(handle_t *handle,
  *
  * It returns the error in case of allocation failure.
  */
+/*
+ * OyTao: @handle: 日志处理使用(TODO)
+ */
+
 int ext4_map_blocks(handle_t *handle, struct inode *inode,
 		    struct ext4_map_blocks *map, int flags)
 {
@@ -500,22 +504,45 @@ int ext4_map_blocks(handle_t *handle, struct inode *inode,
 
 	/* Lookup extent status tree firstly */
 	if (ext4_es_lookup_extent(inode, map->m_lblk, &es)) {
+		/* 
+		 * OyTao:
+		 * 为什么delayed或者hole状态下，没有真实的物理block?
+		 * TODO
+		 */
 		if (ext4_es_is_written(&es) || ext4_es_is_unwritten(&es)) {
+			/*
+			 * OyTao: 如果extent status是unwritten或者written，则表示有对应的
+			 * 物理的block,获取当前lblk对应的pblk
+			 */
 			map->m_pblk = ext4_es_pblock(&es) +
 					map->m_lblk - es.es_lblk;
+
 			map->m_flags |= ext4_es_is_written(&es) ?
 					EXT4_MAP_MAPPED : EXT4_MAP_UNWRITTEN;
+
+			/* 
+			 * OyTao: map->m_len, 取当前在extent status tree中命中的
+			 * extent len中剩余的长度与map->m_len之间的最小值。
+			 */
 			retval = es.es_len - (map->m_lblk - es.es_lblk);
 			if (retval > map->m_len)
 				retval = map->m_len;
 			map->m_len = retval;
+
 		} else if (ext4_es_is_delayed(&es) || ext4_es_is_hole(&es)) {
+			/*
+			 * OyTao: extent_status: delayed || holed,还没有映射真实的物理block
+			 */
 			map->m_pblk = 0;
+			/*
+			 * OyTao: 同上
+			 */
 			retval = es.es_len - (map->m_lblk - es.es_lblk);
 			if (retval > map->m_len)
 				retval = map->m_len;
 			map->m_len = retval;
 			retval = 0;
+
 		} else {
 			BUG_ON(1);
 		}
@@ -530,11 +557,17 @@ int ext4_map_blocks(handle_t *handle, struct inode *inode,
 	 * Try to see if we can get the block without requesting a new
 	 * file system block.
 	 */
+	/*
+	 * OyTao:如果在extent status tree中没有找到对应的blk 
+	 */
 	down_read(&EXT4_I(inode)->i_data_sem);
+
+	/* OyTao: 如果该inode启用了extent. */
 	if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS)) {
 		retval = ext4_ext_map_blocks(handle, inode, map, flags &
 					     EXT4_GET_BLOCKS_KEEP_SIZE);
 	} else {
+	/* OyTao: 没有启用extent模式，采用的还是之前的间接映射模式 */
 		retval = ext4_ind_map_blocks(handle, inode, map, flags &
 					     EXT4_GET_BLOCKS_KEEP_SIZE);
 	}
@@ -3209,6 +3242,9 @@ ext4_readpages(struct file *file, struct address_space *mapping,
 {
 	struct inode *inode = mapping->host;
 
+	/*
+	 * OyTao: TODO ext4 inline data
+	 */
 	/* If the file has inline data, no need to do readpages. */
 	if (ext4_has_inline_data(inode))
 		return 0;
