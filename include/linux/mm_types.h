@@ -42,6 +42,11 @@ struct mem_cgroup;
  * allows the use of atomic double word operations on the flags/mapping
  * and lru list pointers also.
  */
+/*
+ * OyTao: struct page不仅可以描述成一个真实的页框，也会用来描述一个slab、slub
+ * 等。
+ * 具体的域分析 TODO
+ */
 struct page {
 	/* First double word block */
 	unsigned long flags;		/* Atomic flags, some possibly

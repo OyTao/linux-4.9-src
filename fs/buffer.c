@@ -186,6 +186,7 @@ void end_buffer_write_sync(struct buffer_head *bh, int uptodate)
 EXPORT_SYMBOL(end_buffer_write_sync);
 
 /*
+ * OyTao:TODO
  * Various filesystems appear to want __find_get_block to be non-blocking.
  * But it's the page lock which protects the buffers.  To get around this,
  * we get exclusion from try_to_free_buffers with the blockdev mapping's
@@ -885,6 +886,11 @@ struct buffer_head *alloc_page_buffers(struct page *page, unsigned long size,
 try_again:
 	head = NULL;
 	offset = PAGE_SIZE;
+
+	/*
+	 * OyTao: 为page分配所有的buffer head,将二者关联起来，同时设置b_data值。
+	 * 如果apge是在HighMem区域， b_data则是针对于page的offset.
+	 */
 	while ((offset -= size) >= 0) {
 		bh = alloc_buffer_head(GFP_NOFS);
 		if (!bh)
@@ -899,10 +905,13 @@ try_again:
 		/* Link the buffer to its page */
 		set_bh_page(bh, page, offset);
 	}
+
 	return head;
 /*
  * In case anything failed, we just free everything we got.
  */
+
+/* OyTao: 为page分配bufferhead失败，则需要释放更多的内存，同时重试 */
 no_grow:
 	if (head) {
 		do {
@@ -927,11 +936,19 @@ no_grow:
 	 * the reserve list is empty, we're sure there are 
 	 * async buffer heads in use.
 	 */
+	/*
+	 * OyTao: TODO
+	 */
 	free_more_memory();
+
 	goto try_again;
 }
 EXPORT_SYMBOL_GPL(alloc_page_buffers);
 
+/*
+ * OyTao: hold page. (inc ref count).
+ * 同时设置pagePrivate标记，将@bh赋给private_data of page.
+ */
 static inline void
 link_dev_buffers(struct page *page, struct buffer_head *head)
 {
@@ -980,6 +997,7 @@ init_page_buffers(struct page *page, struct block_device *bdev,
 			if (block < end_block)
 				set_buffer_mapped(bh);
 		}
+
 		block++;
 		bh = bh->b_this_page;
 	} while (bh != head);
@@ -1016,6 +1034,9 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	 */
 	gfp_mask |= __GFP_NOFAIL;
 
+	/*
+	 * OyTao: 查找对应的page,如果没有创建，with locked, inc ref count.
+	 */
 	page = find_or_create_page(inode->i_mapping, index, gfp_mask);
 	if (!page)
 		return ret;
@@ -1024,6 +1045,7 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 
 	if (page_has_buffers(page)) {
 		bh = page_buffers(page);
+		/* OyTao: 如果找到对应的缓冲页,初始化buffer heads by page */
 		if (bh->b_size == size) {
 			end_block = init_page_buffers(page, bdev,
 						(sector_t)index << sizebits,
@@ -1037,6 +1059,7 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	/*
 	 * Allocate some buffers for this page
 	 */
+	/* OyTao: 为page分配所有的bufferhead,并初始化 */
 	bh = alloc_page_buffers(page, size, 0);
 	if (!bh)
 		goto failed;
@@ -1046,11 +1069,18 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	 * lock to be atomic wrt __find_get_block(), which does not
 	 * run under the page lock.
 	 */
+	/*
+	 * OyTao: why lock private_lock 
+	 */
 	spin_lock(&inode->i_mapping->private_lock);
+
 	link_dev_buffers(page, bh);
+
 	end_block = init_page_buffers(page, bdev, (sector_t)index << sizebits,
 			size);
+
 	spin_unlock(&inode->i_mapping->private_lock);
+
 done:
 	ret = (block < end_block) ? 1 : -ENXIO;
 failed:
@@ -1069,6 +1099,9 @@ grow_buffers(struct block_device *bdev, sector_t block, int size, gfp_t gfp)
 	pgoff_t index;
 	int sizebits;
 
+	/*
+	 * OyTao: 计算@block对应的数据页page的偏移。
+	 */
 	sizebits = -1;
 	do {
 		sizebits++;
@@ -1112,10 +1145,12 @@ __getblk_slow(struct block_device *bdev, sector_t block,
 		struct buffer_head *bh;
 		int ret;
 
+		/* OyTao: 再次从当前的cpu cache还有page cache中查找 */
 		bh = __find_get_block(bdev, block, size);
 		if (bh)
 			return bh;
 
+		/* OyTao: 分配对应的page已经buffer head */
 		ret = grow_buffers(bdev, block, size, gfp);
 		if (ret < 0)
 			return NULL;
@@ -1288,6 +1323,10 @@ static inline void check_irqs_on(void)
 /*
  * The LRU management algorithm is dopey-but-simple.  Sorry.
  */
+/*
+ * OyTao: 将@bh加入到per cpu bh_lurs缓存中。放在第一个。
+ * 同时将@bh_lurs缓存中等于@bh的buffer_head，执行_brelse操作。(dec ref count)
+ */
 static void bh_lru_install(struct buffer_head *bh)
 {
 	struct buffer_head *evictee = NULL;
@@ -1301,6 +1340,7 @@ static void bh_lru_install(struct buffer_head *bh)
 
 		get_bh(bh);
 		bhs[out++] = bh;
+
 		for (in = 0; in < BH_LRU_SIZE; in++) {
 			struct buffer_head *bh2 =
 				__this_cpu_read(bh_lrus.bhs[in]);
@@ -1384,10 +1424,14 @@ __find_get_block(struct block_device *bdev, sector_t block, unsigned size)
 
 	if (bh == NULL) {
 		/* __find_get_block_slow will mark the page accessed */
+		/* OyTao: 在page cache中查找对应的buffer head */
 		bh = __find_get_block_slow(bdev, block);
+
+		/* OyTao: 将@bh加入per cpu @bh_lrus缓存中。 */
 		if (bh)
 			bh_lru_install(bh);
 	} else
+		/*OyTao: mark_page_accessed TODO  */
 		touch_buffer(bh);
 
 	return bh;
@@ -1403,16 +1447,18 @@ EXPORT_SYMBOL(__find_get_block);
  * try_to_free_buffers() attempt is failing.  FIXME, perhaps?
  */
 /*
- * OyTao: 读取数据块的过程 TODO
+ * OyTao: 得到对应block对应的buffer head.可能是NULL。buffer head可能是新创建的。
  */
 struct buffer_head *
 __getblk_gfp(struct block_device *bdev, sector_t block,
 	     unsigned size, gfp_t gfp)
 {
 
+	/* OyTao: 从lru ,pagecache中获取对应的buffer head */
 	struct buffer_head *bh = __find_get_block(bdev, block, size);
 
 	might_sleep();
+	/* OyTao: 再次__find_get_block，没有，创建新的page以及对应的buffer head */
 	if (bh == NULL)
 		bh = __getblk_slow(bdev, block, size, gfp);
 	return bh;
@@ -1492,6 +1538,10 @@ void invalidate_bh_lrus(void)
 }
 EXPORT_SYMBOL_GPL(invalidate_bh_lrus);
 
+/*
+ * OyTao: 关联buffer head 与page. 设置buffer head中的@b_data.
+ * 如果是HighMem分配的，则@b_data是对于page的偏移。
+ */
 void set_bh_page(struct buffer_head *bh,
 		struct page *page, unsigned long offset)
 {
@@ -3082,6 +3132,9 @@ void guard_bio_eod(int op, struct bio *bio)
 	}
 }
 
+/*
+ * OyTao: 根据bufferhead构建bio，submit_bio
+ */
 static int submit_bh_wbc(int op, int op_flags, struct buffer_head *bh,
 			 unsigned long bio_flags, struct writeback_control *wbc)
 {
@@ -3091,11 +3144,14 @@ static int submit_bh_wbc(int op, int op_flags, struct buffer_head *bh,
 	BUG_ON(!buffer_mapped(bh));
 	BUG_ON(!bh->b_end_io);
 	BUG_ON(buffer_delay(bh));
+
+	/* OyTao: TODO why */
 	BUG_ON(buffer_unwritten(bh));
 
 	/*
 	 * Only clear out a write error when rewriting
 	 */
+	/* OyTao: TODO */
 	if (test_set_buffer_req(bh) && (op == REQ_OP_WRITE))
 		clear_buffer_write_io_error(bh);
 
@@ -3105,6 +3161,7 @@ static int submit_bh_wbc(int op, int op_flags, struct buffer_head *bh,
 	 */
 	bio = bio_alloc(GFP_NOIO, 1);
 
+	/* OyTao: submit_bh 没有wbc TODO */
 	if (wbc) {
 		wbc_init_bio(wbc, bio);
 		wbc_account_io(wbc, bh->b_page, bh->b_size);
@@ -3480,19 +3537,28 @@ EXPORT_SYMBOL(bh_uptodate_or_lock);
  *
  * Returns zero on success and -EIO on error.
  */
+/*
+ * OyTao: 调用者肯定hold buffer lock. buffer head对应的pblock sync read operation.
+ */
 int bh_submit_read(struct buffer_head *bh)
 {
 	BUG_ON(!buffer_locked(bh));
 
+	/* OyTao: 如果已经拥有了最新的数据，则unlock buffer */
 	if (buffer_uptodate(bh)) {
 		unlock_buffer(bh);
 		return 0;
 	}
 
+	/* OyTao: hold buffer head */
 	get_bh(bh);
+
 	bh->b_end_io = end_buffer_read_sync;
+
 	submit_bh(REQ_OP_READ, 0, bh);
+
 	wait_on_buffer(bh);
+
 	if (buffer_uptodate(bh))
 		return 0;
 	return -EIO;

@@ -16,23 +16,47 @@
 
 #ifdef CONFIG_BLOCK
 
+/*
+ * OyTao: buffer head的状态。
+ */
 enum bh_state_bits {
+	/* OyTao: 缓冲区包含有最新的数据 */
 	BH_Uptodate,	/* Contains valid data */
+	/* OyTao：缓冲区中有数据需要回写到磁盘上 */
 	BH_Dirty,	/* Is dirty */
+	/* OyTao: 在缓冲区进行磁盘数据传输时候，需要加lock */
 	BH_Lock,	/* Is locked */
+
+	/* OyTao: 已经开始请求对应的磁盘数据 */
 	BH_Req,		/* Has been submitted for I/O */
+
 	BH_Uptodate_Lock,/* Used by the first bh in a page, to serialise
 			  * IO completion of other buffers in the page
 			  */
 
+	/* OyTao: 已经有对应的磁盘映射， 即b_bdev以及b_blocknr有效 */
 	BH_Mapped,	/* Has a disk mapping */
+
+	/* OyTao: 刚分配，还有被访问过 */
 	BH_New,		/* Disk mapping was newly created by get_block */
+
+	/* OyTao: 如果处于异步读的过程 */
 	BH_Async_Read,	/* Is under end_buffer_async_read I/O */
+
+	/* OyTao: 如果在异步写过程中 */
 	BH_Async_Write,	/* Is under end_buffer_async_write I/O */
+
+	/* OyTao: 在磁盘上没有分配对应的空间 */
 	BH_Delay,	/* Buffer is not yet allocated on disk */
+
 	BH_Boundary,	/* Block is followed by a discontiguity */
+
+	/* OyTao: 写操作时候出现error IO */
 	BH_Write_EIO,	/* I/O error on write */
+
+	/* OyTao: 在磁盘上已经分配了对应的空间，但是没有写数据 TODO */
 	BH_Unwritten,	/* Buffer is allocated on disk but not written */
+
 	BH_Quiet,	/* Buffer Error Prinks to be quiet */
 	BH_Meta,	/* Buffer contains metadata */
 	BH_Prio,	/* Buffer should be submitted with REQ_PRIO */
@@ -70,14 +94,20 @@ struct buffer_head {
 
 	sector_t b_blocknr;		/* start block number */
 	size_t b_size;			/* size of mapping */
+
 	char *b_data;			/* pointer to data within the page */
 
 	struct block_device *b_bdev;
+
 	bh_end_io_t *b_end_io;		/* I/O completion */
+
  	void *b_private;		/* reserved for b_end_io */
+
 	struct list_head b_assoc_buffers; /* associated with another mapping */
+
 	struct address_space *b_assoc_map;	/* mapping this buffer is
 						   associated with */
+
 	atomic_t b_count;		/* users using this buffer_head */
 };
 
@@ -268,6 +298,9 @@ void buffer_init(void);
  * inline definitions
  */
 
+/*
+ * OyTao:
+ */
 static inline void attach_page_buffers(struct page *page,
 		struct buffer_head *head)
 {

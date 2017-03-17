@@ -306,6 +306,13 @@ static inline struct page *find_lock_page(struct address_space *mapping,
  * find_or_create_page() may sleep, even if @gfp_flags specifies an
  * atomic allocation!
  */
+/*
+ * OyTao:从pagecache中获取对应的page并且inc ref count.
+ * 如果没有，则创建，并加入到pagecache以及lru list。inc ref count
+ * 返回的page with locked.
+ *
+ * 如果内存不足，可能会返回NULL。该函数还可能睡眠.
+ */
 static inline struct page *find_or_create_page(struct address_space *mapping,
 					pgoff_t offset, gfp_t gfp_mask)
 {

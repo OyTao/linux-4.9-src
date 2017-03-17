@@ -35,6 +35,18 @@
  */
 #define PAGE_ALLOC_COSTLY_ORDER 3
 
+/*
+ * OyTao: PAGE页的类型：
+ * 1) unmovable：在内存中有固定的位置，内核中使用的大部分页属于这种类型。
+ * 2) movable: 通过进程页表映射的PAGE,他们可以movable, 然后更新对应的页表即可。
+ *             用户态使用的没有映射具体磁盘文件的Page基本都是该类型(栈，堆，
+ *             shmem共享内存，匿名共享内存等)
+ * 3) reclaimable: unmovable,但是可以回收的。Page中的内容可以通过某种方式恢复。
+ *				   如映射的文件等。这类page在系统内存不足时候，是可以进行回写，
+ *				   然后释放对应的page资源。
+ * 4) Pcptypes, movable，表示per cpu中的数据库结构 TODO
+ * CMA(可以参考NVME driver), ioslate TODO
+ */
 enum {
 	MIGRATE_UNMOVABLE,
 	MIGRATE_MOVABLE,
@@ -87,6 +99,9 @@ extern int page_group_by_mobility_disabled;
 	get_pfnblock_flags_mask(page, page_to_pfn(page),		\
 			PB_migrate_end, MIGRATETYPE_MASK)
 
+/*
+ * OyTao: 对应一个固定的order, 保存着不同类型的page。
+ */
 struct free_area {
 	struct list_head	free_list[MIGRATE_TYPES];
 	unsigned long		nr_free;
@@ -259,20 +274,40 @@ enum zone_watermarks {
 #define low_wmark_pages(z) (z->watermark[WMARK_LOW])
 #define high_wmark_pages(z) (z->watermark[WMARK_HIGH])
 
+/*
+ * OyTao: per cpu pages cache.
+ */
 struct per_cpu_pages {
+	/* OyTao: 当前cache中page的数目 */
 	int count;		/* number of pages in the list */
+
+	/* OyTao: cache中 pages的最大容量 */
 	int high;		/* high watermark, emptying needed */
+
+	/* OyTao: 将要删除回伙伴系统的page 数目 */
 	int batch;		/* chunk size for buddy add/remove */
 
 	/* Lists of pages, one per migrate type stored on the pcp-lists */
+	/*
+	 * OyTao: 只有movable, unmovable, reclaimable 三种类型的page
+	 */
 	struct list_head lists[MIGRATE_PCPTYPES];
 };
 
+/*
+ * OyTao: per CPU的page 缓存。
+ * 其中保存着一些已经空闲的page. 申请一个新的page时候，优先会从per cpu page 
+ * cache中分配。如果该pages cache中不足，则会向free_area 伙伴系统中申请；
+ * 如果cache中过多 > @high of pcp，需要释放回free_area中。
+ */
 struct per_cpu_pageset {
+
 	struct per_cpu_pages pcp;
+
 #ifdef CONFIG_NUMA
 	s8 expire;
 #endif
+
 #ifdef CONFIG_SMP
 	s8 stat_threshold;
 	s8 vm_stat_diff[NR_VM_ZONE_STAT_ITEMS];
