@@ -43,10 +43,10 @@ enum {
 
 /*
  * OyTao: ess status node 状态。TODO
- * 1) written:
+ * 1) written: 
  * 2) unwritten:
  * 3) delayed:
- * 4) hole:
+ * 4) hole: 没有映射
  * 5) referenced:
  */
 #define EXTENT_STATUS_WRITTEN	(1 << ES_WRITTEN_B)
@@ -73,6 +73,10 @@ struct extent_status {
 	struct rb_node rb_node;
 	ext4_lblk_t es_lblk;	/* first logical block extent covers */
 	ext4_lblk_t es_len;	/* length of extent in block */
+	/* OyTao: @es_pblk 中可能包含了具体的physical block idx, 
+	 * 也可能没有包含具体 pblk, 其中还包含了对应的logical block对应的status,
+	 * written, unwritten, delayed, hole, referenced.
+	 * */
 	ext4_fsblk_t es_pblk;	/* first physical block */
 };
 

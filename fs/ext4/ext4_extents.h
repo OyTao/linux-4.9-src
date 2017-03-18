@@ -72,9 +72,14 @@ struct ext4_extent_tail {
  * This is the extent on-disk structure.
  * It's used at the bottom of the tree.
  */
+/* OyTao: height = 0, 一个block由header + N个ext4_extent (存储在磁盘上) */
 struct ext4_extent {
+	/* OyTao: logical block idx */
 	__le32	ee_block;	/* first logical block extent covers */
+
 	__le16	ee_len;		/* number of blocks covered by extent */
+
+	/* OyTao: physical block idx */
 	__le16	ee_start_hi;	/* high 16 bits of physical block */
 	__le32	ee_start_lo;	/* low 32 bits of physical block */
 };
@@ -83,6 +88,7 @@ struct ext4_extent {
  * This is index on-disk structure.
  * It's used at all the levels except the bottom.
  */
+/* OyTao: ext4 extent tree中的非叶子节点在磁盘上存储的数据结构，与叶子节点不同 */
 struct ext4_extent_idx {
 	__le32	ei_block;	/* index covers logical blocks from 'block' */
 	__le32	ei_leaf_lo;	/* pointer to the physical block of the next *

@@ -95,6 +95,10 @@ static void mpage_end_io(struct bio *bio)
 	bio_put(bio);
 }
 
+/*
+ * OyTao: 如果是读一个page，则nr_pages = 1, page不为空；
+ * 如果nr_pages > 1, 则page = NULL, pages包括多个page.
+ */
 int ext4_mpage_readpages(struct address_space *mapping,
 			 struct list_head *pages, struct page *page,
 			 unsigned nr_pages)
@@ -106,6 +110,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 	const unsigned blkbits = inode->i_blkbits;
 	const unsigned blocks_per_page = PAGE_SIZE >> blkbits;
 	const unsigned blocksize = 1 << blkbits;
+
 	sector_t block_in_file;
 	sector_t last_block;
 	sector_t last_block_in_file;
@@ -126,26 +131,49 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		unsigned first_hole = blocks_per_page;
 
 		prefetchw(&page->flags);
+
 		if (pages) {
 			page = list_entry(pages->prev, struct page, lru);
+			/*
+			 * OyTao: page目前只在list @pages上，首先从该链表中删除，然后加入到
+			 * pagecache中。
+			 */
 			list_del(&page->lru);
+
+			/*
+			 * OyTao: 将该page添加到page cache中。hold pages.
+			 */
 			if (add_to_page_cache_lru(page, mapping, page->index,
 				  readahead_gfp_mask(mapping)))
 				goto next_page;
 		}
 
+		/* OyTao: 如果对应的page有了buffer head */
 		if (page_has_buffers(page))
 			goto confused;
 
+		/*
+		 * OyTao: @block_in_file: page所对应的block idx
+		 */
 		block_in_file = (sector_t)page->index << (PAGE_SHIFT - blkbits);
+
+		/*
+		 * OyTao: @last_block: nr pages最后一个对应的block idx, 
+		 * 会与文件的大小进行比较
+		 */
 		last_block = block_in_file + nr_pages * blocks_per_page;
 		last_block_in_file = (i_size_read(inode) + blocksize - 1) >> blkbits;
 		if (last_block > last_block_in_file)
 			last_block = last_block_in_file;
+
+		/* OyTao: page中已经读完的page数目 */
 		page_block = 0;
 
 		/*
 		 * Map blocks using the previous result first.
+		 */
+		/*
+		 * OyTao: TODO 
 		 */
 		if ((map.m_flags & EXT4_MAP_MAPPED) &&
 		    block_in_file > map.m_lblk &&
@@ -174,6 +202,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		 */
 		while (page_block < blocks_per_page) {
 			if (block_in_file < last_block) {
+
 				map.m_lblk = block_in_file;
 				map.m_len = last_block - block_in_file;
 
@@ -186,6 +215,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 					goto next_page;
 				}
 			}
+
 			if ((map.m_flags & EXT4_MAP_MAPPED) == 0) {
 				fully_mapped = 0;
 				if (first_hole == blocks_per_page)

@@ -564,36 +564,50 @@ enum {
 	/* Allocate any needed blocks and/or convert an unwritten
 	   extent to be an initialized ext4 */
 #define EXT4_GET_BLOCKS_CREATE			0x0001
+
 	/* Request the creation of an unwritten extent */
 #define EXT4_GET_BLOCKS_UNWRIT_EXT		0x0002
+
 #define EXT4_GET_BLOCKS_CREATE_UNWRIT_EXT	(EXT4_GET_BLOCKS_UNWRIT_EXT|\
 						 EXT4_GET_BLOCKS_CREATE)
+
 	/* Caller is from the delayed allocation writeout path
 	 * finally doing the actual allocation of delayed blocks */
 #define EXT4_GET_BLOCKS_DELALLOC_RESERVE	0x0004
+
 	/* caller is from the direct IO path, request to creation of an
 	unwritten extents if not allocated, split the unwritten
 	extent if blocks has been preallocated already*/
 #define EXT4_GET_BLOCKS_PRE_IO			0x0008
+
 #define EXT4_GET_BLOCKS_CONVERT			0x0010
+
 #define EXT4_GET_BLOCKS_IO_CREATE_EXT		(EXT4_GET_BLOCKS_PRE_IO|\
 					 EXT4_GET_BLOCKS_CREATE_UNWRIT_EXT)
+
 	/* Convert extent to initialized after IO complete */
 #define EXT4_GET_BLOCKS_IO_CONVERT_EXT		(EXT4_GET_BLOCKS_CONVERT|\
 					 EXT4_GET_BLOCKS_CREATE_UNWRIT_EXT)
+
 	/* Eventual metadata allocation (due to growing extent tree)
 	 * should not fail, so try to use reserved blocks for that.*/
 #define EXT4_GET_BLOCKS_METADATA_NOFAIL		0x0020
+
 	/* Don't normalize allocation size (used for fallocate) */
 #define EXT4_GET_BLOCKS_NO_NORMALIZE		0x0040
+
 	/* Request will not result in inode size update (user for fallocate) */
 #define EXT4_GET_BLOCKS_KEEP_SIZE		0x0080
+
 	/* Convert written extents to unwritten */
 #define EXT4_GET_BLOCKS_CONVERT_UNWRITTEN	0x0100
+
 	/* Write zeros to newly created written extents */
 #define EXT4_GET_BLOCKS_ZERO			0x0200
+
 #define EXT4_GET_BLOCKS_CREATE_ZERO		(EXT4_GET_BLOCKS_CREATE |\
 					EXT4_GET_BLOCKS_ZERO)
+
 	/* Caller will submit data before dropping transaction handle. This
 	 * allows jbd2 to avoid submitting data before commit. */
 #define EXT4_GET_BLOCKS_IO_SUBMIT		0x0400

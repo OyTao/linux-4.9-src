@@ -149,6 +149,11 @@ static void buffer_io_error(struct buffer_head *bh, char *msg)
  * hashing after unlocking the buffer, so it doesn't actually touch the bh
  * itself.
  */
+/*
+ * OyTao: 对于同步read buffer read的end function,
+ * 在调用bh_submit_read时候，已经lock，
+ * 所以在读完成之后，unlock。
+ */
 static void __end_buffer_read_notouch(struct buffer_head *bh, int uptodate)
 {
 	if (uptodate) {
@@ -3096,7 +3101,7 @@ static void end_bio_bh_io_sync(struct bio *bio)
  * errors, this only handles the "we need to be able to
  * do IO at the final sector" case.
  */
-void guard_bio_eod(int op, struct bio *bio)
+void uard_bio_eod(int op, struct bio *bio)
 {
 	sector_t maxsector;
 	struct bio_vec *bvec = &bio->bi_io_vec[bio->bi_vcnt - 1];
@@ -3170,6 +3175,7 @@ static int submit_bh_wbc(int op, int op_flags, struct buffer_head *bh,
 	bio->bi_iter.bi_sector = bh->b_blocknr * (bh->b_size >> 9);
 	bio->bi_bdev = bh->b_bdev;
 
+	/* OyTao:add page into bio */
 	bio_add_page(bio, bh->b_page, bh->b_size, bh_offset(bh));
 	BUG_ON(bio->bi_iter.bi_size != bh->b_size);
 
@@ -3178,14 +3184,17 @@ static int submit_bh_wbc(int op, int op_flags, struct buffer_head *bh,
 	bio->bi_flags |= bio_flags;
 
 	/* Take care of bh's that straddle the end of the device */
+	/* OyTao: TODO */
 	guard_bio_eod(op, bio);
 
+	/* OyTao: 设置bio flags */
 	if (buffer_meta(bh))
 		op_flags |= REQ_META;
 	if (buffer_prio(bh))
 		op_flags |= REQ_PRIO;
 	bio_set_op_attrs(bio, op, op_flags);
 
+	/* OyTao: 提交BIO到块设备层 */
 	submit_bio(bio);
 	return 0;
 }
@@ -3550,13 +3559,19 @@ int bh_submit_read(struct buffer_head *bh)
 		return 0;
 	}
 
-	/* OyTao: hold buffer head */
+	/* OyTao: hold buffer head, 在@b_end_io的会put_bh */
 	get_bh(bh);
 
+	/* OyTao: 设置buffer head读完成的操作。 
+	 * 在end_buffer_read_sync中如果是uptodate,则设置buffer_head uptodate位。
+	 * 然后解锁buffer head
+	 */
 	bh->b_end_io = end_buffer_read_sync;
 
+	/* OyTao: 构建BIO，下发到块层 */
 	submit_bh(REQ_OP_READ, 0, bh);
 
+	/* OyTao: 一直等待buffer head unlock */
 	wait_on_buffer(bh);
 
 	if (buffer_uptodate(bh))

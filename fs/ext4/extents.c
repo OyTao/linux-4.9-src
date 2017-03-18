@@ -510,6 +510,11 @@ int ext4_ext_check_inode(struct inode *inode)
 	return ext4_ext_check(inode, ext_inode_hdr(inode), ext_depth(inode), 0);
 }
 
+/*
+ * OyTao: 如果在buffer head中没有找到最新的数据，则读数据(sync)
+ * 如果读的是extent tree中的最底层的叶子节点，
+ * 则将其包含的映射信息以及出现Hole的映射信息都加入到extent status tree中
+ */
 static struct buffer_head *
 __read_extent_tree_block(const char *function, unsigned int line,
 			 struct inode *inode, ext4_fsblk_t pblk, int depth,
@@ -531,15 +536,33 @@ __read_extent_tree_block(const char *function, unsigned int line,
 			goto errout;
 	}
 
+	/* 在ext4_find_extent会设置EXT4_EX_FORCE_CACHE */
 	if (buffer_verified(bh) && !(flags & EXT4_EX_FORCE_CACHE))
 		return bh;
+
+	/* OyTao: 检查读取来的buffer head */
 	err = __ext4_ext_check(function, line, inode,
 			       ext_block_hdr(bh), depth, pblk);
 	if (err)
 		goto errout;
+
+	/* OyTao: 设置buffer head已经verified */
 	set_buffer_verified(bh);
+
 	/*
 	 * If this is a leaf block, cache all of its entries
+	 */
+	/* 
+	 * OyTao: ext4 height == 0,真实的数据 
+	 *
+	 *		| ext4_extent_header | ext4_extent_idx | ... | ext4_extent_idx |
+	 *                                   /
+	 *									/
+	 *	  | ext4_extent_header | ext4_extent_idx | ... | ext4_extent_idx |
+	 *                                                     /
+	 *                                                    /
+	 *  | ext4_extent_header | ext4_extent | ... | ext4_extent | (height = 0)
+	 *
 	 */
 	if (!(flags & EXT4_EX_NOCACHE) && depth == 0) {
 		struct ext4_extent_header *eh = ext_block_hdr(bh);
@@ -549,9 +572,15 @@ __read_extent_tree_block(const char *function, unsigned int line,
 
 		for (i = le16_to_cpu(eh->eh_entries); i > 0; i--, ex++) {
 			unsigned int status = EXTENT_STATUS_WRITTEN;
+
 			ext4_lblk_t lblk = le32_to_cpu(ex->ee_block);
 			int len = ext4_ext_get_actual_len(ex);
 
+			/* OyTao: 如果prev != lblk
+			 * 则表示prev ---> lblk - prev之间对应的logical block idx没有对应的
+			 * physical block, 所以将对应的prev --> lblk-prev范围内的
+			 * extent_status是EXTENT_STATUS_HOLE.
+			 */
 			if (prev && (prev != lblk))
 				ext4_es_cache_extent(inode, prev,
 						     lblk - prev, ~0,
@@ -559,8 +588,11 @@ __read_extent_tree_block(const char *function, unsigned int line,
 
 			if (ext4_ext_is_unwritten(ex))
 				status = EXTENT_STATUS_UNWRITTEN;
+
+			/* OyTao: 缓存已经或得到的映射信息 */
 			ext4_es_cache_extent(inode, lblk, len,
 					     ext4_ext_pblock(ex), status);
+
 			prev = lblk + len;
 		}
 	}
@@ -822,6 +854,7 @@ ext4_ext_binsearch_idx(struct inode *inode,
  * binary search for closest extent of the given block
  * the header must be checked before calling this
  */
+/* OyTao: 在extent tree中的叶子节点中，查找对应的block, 并存放在path->p_ext中 */
 static void
 ext4_ext_binsearch(struct inode *inode,
 		struct ext4_ext_path *path, ext4_lblk_t block)
@@ -859,6 +892,7 @@ ext4_ext_binsearch(struct inode *inode,
 			ext4_ext_pblock(path->p_ext),
 			ext4_ext_is_unwritten(path->p_ext),
 			ext4_ext_get_actual_len(path->p_ext));
+
 
 #ifdef CHECK_BINSEARCH
 	{
@@ -921,7 +955,7 @@ ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 	}
 
 	/*
-	 * OyTao: 重新分配一个拥有(depth + 2)的path. TODO 
+	 * OyTao: 重新分配一个拥有(depth + 2)的path. TODO
 	 */
 	if (!path) {
 		/* account possible depth increase */
@@ -958,6 +992,7 @@ ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 			goto err;
 		}
 
+		/* OyTao: 获取下一级索引的ext4_extent_header  */
 		eh = ext_block_hdr(bh);
 
 		ppos++;
@@ -970,8 +1005,11 @@ ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 	path[ppos].p_idx = NULL;
 
 	/* find extent */
+	/* OyTao: 在叶子节点中查找对应的block  */
 	ext4_ext_binsearch(inode, path + ppos, block);
+
 	/* if not an empty leaf */
+	/* OyTao:如果在叶子节点中找到对应的block，则在path中存放对应的block idx */
 	if (path[ppos].p_ext)
 		path[ppos].p_block = ext4_ext_pblock(path[ppos].p_ext);
 
@@ -4367,10 +4405,17 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 		goto out2;
 	}
 
+	/*
+	 * OyTao: 在ext4_find_extent中，申请的path的长度是depth + 2,
+	 * 在path[depth]中存放的是叶子节点中查找到的physical block idx.
+	 * path[depth]中的p_ext存放的是在叶子节点中找到包含block idx的ext4_extent
+	 */
 	ex = path[depth].p_ext;
 	if (ex) {
+		/* OyTao: @ee_block: logical block idx. @ee_start: physical block idx.*/
 		ext4_lblk_t ee_block = le32_to_cpu(ex->ee_block);
 		ext4_fsblk_t ee_start = ext4_ext_pblock(ex);
+
 		unsigned short ee_len;
 
 
@@ -4384,9 +4429,12 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 
 		/* if found extent covers block, simply return it */
 		if (in_range(map->m_lblk, ee_block, ee_len)) {
+
 			newblock = map->m_lblk - ee_block + ee_start;
+
 			/* number of remaining blocks in the extent */
 			allocated = ee_len - (map->m_lblk - ee_block);
+
 			ext_debug("%u fit into %u:%d -> %llu\n", map->m_lblk,
 				  ee_block, ee_len, newblock);
 

@@ -658,6 +658,7 @@ EXPORT_SYMBOL_GPL(replace_page_cache_page);
 
 /*
  * OyTao: 0: success TODO
+ *  inc page ref count.
  */
 static int __add_to_page_cache_locked(struct page *page,
 				      struct address_space *mapping,
@@ -671,6 +672,7 @@ static int __add_to_page_cache_locked(struct page *page,
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
 	VM_BUG_ON_PAGE(PageSwapBacked(page), page);
 
+	/* OyTao: TODO */
 	if (!huge) {
 		error = mem_cgroup_try_charge(page, current->mm,
 					      gfp_mask, &memcg, false);
@@ -685,7 +687,9 @@ static int __add_to_page_cache_locked(struct page *page,
 		return error;
 	}
 
+	/* OyTao: hold page */
 	get_page(page);
+	
 	page->mapping = mapping;
 	page->index = offset;
 
@@ -698,7 +702,9 @@ static int __add_to_page_cache_locked(struct page *page,
 	/* hugetlb pages do not participate in page cache accounting. */
 	if (!huge)
 		__inc_node_page_state(page, NR_FILE_PAGES);
+
 	spin_unlock_irq(&mapping->tree_lock);
+
 	if (!huge)
 		mem_cgroup_commit_charge(page, memcg, false, false);
 	trace_mm_filemap_add_to_page_cache(page);
@@ -746,7 +752,7 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 	int ret;
 
 	/*
-	 * OyTao: 锁定page.然后将page加入到pagecache radix tree 中。
+	 * OyTao: 锁定page.然后将page加入到pagecache radix tree 中。 (inc ref count)
 	 */
 	__SetPageLocked(page);
 	ret = __add_to_page_cache_locked(page, mapping, offset,

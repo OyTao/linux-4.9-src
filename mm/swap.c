@@ -185,6 +185,8 @@ static void pagevec_lru_move_fn(struct pagevec *pvec,
 
 	for (i = 0; i < pagevec_count(pvec); i++) {
 		struct page *page = pvec->pages[i];
+
+		/* OyTao: 获取该page对应的物理内存对象 */
 		struct pglist_data *pagepgdat = page_pgdat(page);
 
 		if (pagepgdat != pgdat) {
@@ -778,6 +780,11 @@ void release_pages(struct page **pages, int nr, bool cold)
 			continue;
 		}
 
+		/*
+		 * OyTao: 如果page已经在pgdata_list的lru中,则将其从pgdata list
+		 * lru中删除 (先枷锁lru_lock，然后del, unlock
+		 * 此时page ref count == 0,
+		 */
 		if (PageLRU(page)) {
 			struct pglist_data *pgdat = page_pgdat(page);
 
@@ -868,6 +875,8 @@ void lru_add_page_tail(struct page *page, struct page *page_tail,
 }
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 
+/* OyTao:
+ */
 static void __pagevec_lru_add_fn(struct page *page, struct lruvec *lruvec,
 				 void *arg)
 {
@@ -879,6 +888,7 @@ static void __pagevec_lru_add_fn(struct page *page, struct lruvec *lruvec,
 
 	SetPageLRU(page);
 	add_page_to_lru_list(page, lruvec, lru);
+
 	update_page_reclaim_stat(lruvec, file, active);
 	trace_mm_lru_insertion(page, lru);
 }
@@ -890,6 +900,7 @@ static void __pagevec_lru_add_fn(struct page *page, struct lruvec *lruvec,
 /*
  * OyTao: 将@pvec中的所有pages加入到对应的pglist_data的lru.
  * 同时对所有的pages dec refcount.然后重新初始化@pvec.
+ * 还需要设置page LRU flag.
  */
 void __pagevec_lru_add(struct pagevec *pvec)
 {

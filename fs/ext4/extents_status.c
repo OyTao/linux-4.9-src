@@ -9,6 +9,11 @@
  *
  * Ext4 extents status tree core functions.
  */
+
+/*
+ * OyTao: extent status tree,是一个logical block idx与physical block idx映射的
+ * 信息，是一个红黑树
+ */
 #include <linux/list_sort.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
@@ -739,6 +744,8 @@ error:
 }
 
 /*
+ * OyTao: 怎么保证在extent status tree中没有lblk --> lblk + len之间的信息 TODO
+ *
  * ext4_es_cache_extent() inserts information into the extent status
  * tree if and only if there isn't information about the range in
  * question already.
@@ -766,6 +773,7 @@ void ext4_es_cache_extent(struct inode *inode, ext4_lblk_t lblk,
 	es = __es_tree_search(&EXT4_I(inode)->i_es_tree.root, lblk);
 	if (!es || es->es_lblk > end)
 		__es_insert_extent(inode, &newes);
+
 	write_unlock(&EXT4_I(inode)->i_es_lock);
 }
 
