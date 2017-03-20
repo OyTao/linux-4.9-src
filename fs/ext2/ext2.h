@@ -71,8 +71,11 @@ struct ext2_sb_info {
 	unsigned long s_frags_per_block;/* Number of fragments per block */
 	unsigned long s_inodes_per_block;/* Number of inodes per block */
 	unsigned long s_frags_per_group;/* Number of fragments in a group */
+
 	unsigned long s_blocks_per_group;/* Number of blocks in a group */
+
 	unsigned long s_inodes_per_group;/* Number of inodes in a group */
+
 	unsigned long s_itb_per_group;	/* Number of inode table blocks per group */
 	unsigned long s_gdb_count;	/* Number of group descriptor blocks */
 	unsigned long s_desc_per_block;	/* Number of group descriptors per block */
@@ -670,6 +673,10 @@ struct ext2_inode_info {
 	 * it is used for making block allocation decisions - we try to
 	 * place a file's data blocks near its inode block, and new inodes
 	 * near to their parent directory's inode.
+	 */
+	/*
+	 * OyTao: inode锁在的block group,数据通常与inode在同一个block group,
+	 * 或者挨着.
 	 */
 	__u32	i_block_group;
 

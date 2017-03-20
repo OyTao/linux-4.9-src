@@ -100,19 +100,30 @@ struct ext4_free_data {
 struct ext4_prealloc_space {
 	struct list_head	pa_inode_list;
 	struct list_head	pa_group_list;
+
 	union {
 		struct list_head pa_tmp_list;
 		struct rcu_head	pa_rcu;
 	} u;
+
 	spinlock_t		pa_lock;
+
 	atomic_t		pa_count;
+
 	unsigned		pa_deleted;
+
 	ext4_fsblk_t		pa_pstart;	/* phys. block */
+
+	/* OyTao: logical block start based on file */
 	ext4_lblk_t		pa_lstart;	/* log. block */
+
 	ext4_grpblk_t		pa_len;		/* len of preallocated chunk */
 	ext4_grpblk_t		pa_free;	/* how many blocks are free */
+
 	unsigned short		pa_type;	/* pa type. inode or group */
+
 	spinlock_t		*pa_obj_lock;
+
 	struct inode		*pa_inode;	/* hack, for history only */
 };
 
@@ -122,9 +133,13 @@ enum {
 };
 
 struct ext4_free_extent {
+
 	ext4_lblk_t fe_logical;
+
 	ext4_grpblk_t fe_start;	/* In cluster units */
+
 	ext4_group_t fe_group;
+
 	ext4_grpblk_t fe_len;	/* In cluster units */
 };
 
@@ -147,6 +162,7 @@ struct ext4_locality_group {
 };
 
 struct ext4_allocation_context {
+
 	struct inode *ac_inode;
 	struct super_block *ac_sb;
 
@@ -172,8 +188,10 @@ struct ext4_allocation_context {
 	__u8 ac_2order;		/* if request is to allocate 2^N blocks and
 				 * N > 0, the field stores N, otherwise 0 */
 	__u8 ac_op;		/* operation, for history only */
+
 	struct page *ac_bitmap_page;
 	struct page *ac_buddy_page;
+
 	struct ext4_prealloc_space *ac_pa;
 	struct ext4_locality_group *ac_lg;
 };

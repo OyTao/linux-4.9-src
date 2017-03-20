@@ -118,10 +118,13 @@ enum SHIFT_DIRECTION {
 #define EXT4_MB_HINT_FIRST		0x0008
 /* search for the best chunk */
 #define EXT4_MB_HINT_BEST		0x0010
+
 /* data is being allocated */
 #define EXT4_MB_HINT_DATA		0x0020
+
 /* don't preallocate (for tails) */
 #define EXT4_MB_HINT_NOPREALLOC		0x0040
+
 /* allocate for locality group */
 #define EXT4_MB_HINT_GROUP_ALLOC	0x0080
 /* allocate goal blocks or none */
@@ -140,20 +143,28 @@ enum SHIFT_DIRECTION {
 struct ext4_allocation_request {
 	/* target inode for block we're allocating */
 	struct inode *inode;
+
 	/* how many blocks we want to allocate */
 	unsigned int len;
+
 	/* logical block in target inode */
 	ext4_lblk_t logical;
+
 	/* the closest logical allocated block to the left */
 	ext4_lblk_t lleft;
+
 	/* the closest logical allocated block to the right */
 	ext4_lblk_t lright;
+
 	/* phys. target (a hint) */
 	ext4_fsblk_t goal;
+
 	/* phys. block for the closest logical allocated block to the left */
 	ext4_fsblk_t pleft;
+
 	/* phys. block for the closest logical allocated block to the right */
 	ext4_fsblk_t pright;
+
 	/* flags. see above EXT4_MB_HINT_* */
 	unsigned int flags;
 };
@@ -182,6 +193,7 @@ struct ext4_map_blocks {
 	 * OyTao: logical block index. 与某一个文件相关
 	 */
 	ext4_lblk_t m_lblk;
+
 	unsigned int m_len;
 	unsigned int m_flags;
 };
@@ -276,16 +288,21 @@ struct ext4_io_submit {
 
 /* Translate a block number to a cluster number */
 #define EXT4_B2C(sbi, blk)	((blk) >> (sbi)->s_cluster_bits)
+
 /* Translate a cluster number to a block number */
 #define EXT4_C2B(sbi, cluster)	((cluster) << (sbi)->s_cluster_bits)
+
 /* Translate # of blks to # of clusters */
 #define EXT4_NUM_B2C(sbi, blks)	(((blks) + (sbi)->s_cluster_ratio - 1) >> \
 				 (sbi)->s_cluster_bits)
+
 /* Mask out the low bits to get the starting block of the cluster */
 #define EXT4_PBLK_CMASK(s, pblk) ((pblk) &				\
 				  ~((ext4_fsblk_t) (s)->s_cluster_ratio - 1))
+
 #define EXT4_LBLK_CMASK(s, lblk) ((lblk) &				\
 				  ~((ext4_lblk_t) (s)->s_cluster_ratio - 1))
+
 /* Get the cluster offset */
 #define EXT4_PBLK_COFF(s, pblk) ((pblk) &				\
 				 ((ext4_fsblk_t) (s)->s_cluster_ratio - 1))
@@ -1246,14 +1263,20 @@ struct ext4_super_block {
 	__le32	s_blocks_count_lo;	/* Blocks count */
 	__le32	s_r_blocks_count_lo;	/* Reserved blocks count */
 	__le32	s_free_blocks_count_lo;	/* Free blocks count */
+
 /*10*/	__le32	s_free_inodes_count;	/* Free inodes count */
 	__le32	s_first_data_block;	/* First Data Block */
 	__le32	s_log_block_size;	/* Block size */
 	__le32	s_log_cluster_size;	/* Allocation cluster size */
+
 /*20*/	__le32	s_blocks_per_group;	/* # Blocks per group */
+
 	__le32	s_clusters_per_group;	/* # Clusters per group */
+
 	__le32	s_inodes_per_group;	/* # Inodes per group */
+
 	__le32	s_mtime;		/* Mount time */
+
 /*30*/	__le32	s_wtime;		/* Write time */
 	__le16	s_mnt_count;		/* Mount count */
 	__le16	s_max_mnt_count;	/* Maximal mount count */

@@ -204,6 +204,7 @@ static ext4_fsblk_t ext4_ext_find_goal(struct inode *inode,
 		 * especially if the latter case turns out to be
 		 * common.
 		 */
+		/* OyTao: 如果extent不空，则最后physical block也连续 */
 		ex = path[depth].p_ext;
 		if (ex) {
 			ext4_fsblk_t ext_pblk = ext4_ext_pblock(ex);
@@ -217,6 +218,7 @@ static ext4_fsblk_t ext4_ext_find_goal(struct inode *inode,
 
 		/* it looks like index is empty;
 		 * try to find starting block from index itself */
+		/* OyTao: 没有对应的extent TODO  */
 		if (path[depth].p_bh)
 			return path[depth].p_bh->b_blocknr;
 	}
@@ -514,6 +516,10 @@ int ext4_ext_check_inode(struct inode *inode)
  * OyTao: 如果在buffer head中没有找到最新的数据，则读数据(sync)
  * 如果读的是extent tree中的最底层的叶子节点，
  * 则将其包含的映射信息以及出现Hole的映射信息都加入到extent status tree中
+ */
+/* 
+ * OyTao: 读extent tree中某一个固定的physical block,
+ * 读取的数据存放在buffer head (inc ref count)
  */
 static struct buffer_head *
 __read_extent_tree_block(const char *function, unsigned int line,
@@ -926,6 +932,13 @@ int ext4_ext_tree_init(handle_t *handle, struct inode *inode)
 	return 0;
 }
 
+/*
+ * OyTao: 根据inode, 获取extent tree.
+ * 申请ext4_ext_path [ ext_depth + 2] (本函数只会处理[ext4_depth+1],
+ * 在[ext_depth + 1]存储的是最后的叶子节点中找到对应的ext4_extent
+ * 查找过程中对于每一个block (extent_idxs)会使用二分查找,找到对应的extent idx
+ * 则从磁盘上读取(同步读取）
+ */
 struct ext4_ext_path *
 ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 		 struct ext4_ext_path **orig_path, int flags)
@@ -1501,6 +1514,9 @@ out:
  * returns 0 at @phys
  * return value contains 0 (success) or error code
  */
+/* 
+ * OyTao: 根据查找的@logical block，以及path，寻找left allocated block.
+ */
 static int ext4_ext_search_left(struct inode *inode,
 				struct ext4_ext_path *path,
 				ext4_lblk_t *logical, ext4_fsblk_t *phys)
@@ -1524,7 +1540,12 @@ static int ext4_ext_search_left(struct inode *inode,
 	 * first one in the file */
 
 	ex = path[depth].p_ext;
-	ee_len = ext4_ext_get_actual_len(ex);
+	ee_len = ext4_ext_get_actual_len(ex); 
+
+	/* 
+	 * OyTao: 如果*logical < ex->ee_block，在depth > 1时候出错 ,
+	 * 不会出现此种情况
+	 */
 	if (*logical < le32_to_cpu(ex->ee_block)) {
 		if (unlikely(EXT_FIRST_EXTENT(path[depth].p_hdr) != ex)) {
 			EXT4_ERROR_INODE(inode,
@@ -1547,13 +1568,18 @@ static int ext4_ext_search_left(struct inode *inode,
 		return 0;
 	}
 
+	/*  OyTao: error */
 	if (unlikely(*logical < (le32_to_cpu(ex->ee_block) + ee_len))) {
 		EXT4_ERROR_INODE(inode,
 				 "logical %d < ee_block %d + ee_len %d!",
 				 *logical, le32_to_cpu(ex->ee_block), ee_len);
 		return -EFSCORRUPTED;
 	}
-
+	
+	/* 
+	 * OyTao: 如果*logical_block > ex->ee_block, 则表示ex就是已经分配的left 
+	 * allocated block 
+	 */
 	*logical = le32_to_cpu(ex->ee_block) + ee_len - 1;
 	*phys = ext4_ext_pblock(ex) + ee_len - 1;
 	return 0;
@@ -1565,6 +1591,9 @@ static int ext4_ext_search_left(struct inode *inode,
  * if *logical is the largest allocated block, the function
  * returns 0 at @phys
  * return value contains 0 (success) or error code
+ */
+/*
+ * OyTao: 根据@logical以及查找到logical的path，查找right allocated block 
  */
 static int ext4_ext_search_right(struct inode *inode,
 				 struct ext4_ext_path *path,
@@ -1621,6 +1650,7 @@ static int ext4_ext_search_right(struct inode *inode,
 		return -EFSCORRUPTED;
 	}
 
+	/* OyTao: 如果当前的extent不是最后一个extent,则next extent就是要查找的 */
 	if (ex != EXT_LAST_EXTENT(path[depth].p_hdr)) {
 		/* next allocated block in this leaf */
 		ex++;
@@ -1628,6 +1658,7 @@ static int ext4_ext_search_right(struct inode *inode,
 	}
 
 	/* go up and search for index to the right */
+	/* OyTao: 如果当前的extent是最后一个extent，则需要向上递归 */
 	while (--depth >= 0) {
 		ix = path[depth].p_idx;
 		if (ix != EXT_LAST_INDEX(path[depth].p_hdr))
@@ -1637,6 +1668,7 @@ static int ext4_ext_search_right(struct inode *inode,
 	/* we've gone up to the root and found no index to the right */
 	return 0;
 
+	/* OyTao: 从depth开始，每次都找第一个entent idx/extent */
 got_index:
 	/* we've found index to the right, let's
 	 * follow it and find the closest allocated
@@ -1655,11 +1687,13 @@ got_index:
 		put_bh(bh);
 	}
 
+	/* OyTao:找到最right allocated extent */
 	bh = read_extent_tree_block(inode, block, path->p_depth - depth, 0);
 	if (IS_ERR(bh))
 		return PTR_ERR(bh);
 	eh = ext_block_hdr(bh);
 	ex = EXT_FIRST_EXTENT(eh);
+
 found_extent:
 	*logical = le32_to_cpu(ex->ee_block);
 	*phys = ext4_ext_pblock(ex);
@@ -1676,6 +1710,9 @@ found_extent:
  * allocated block. Thus, index entries have to be consistent
  * with leaves.
  */
+/*
+ * OyTao: 根据搜索到的path, 查找在extent tree中比要查找到的block最接近的block 
+ */
 ext4_lblk_t
 ext4_ext_next_allocated_block(struct ext4_ext_path *path)
 {
@@ -1690,6 +1727,9 @@ ext4_ext_next_allocated_block(struct ext4_ext_path *path)
 	while (depth >= 0) {
 		if (depth == path->p_depth) {
 			/* leaf */
+			/* OyTao: 如果当前extent不是最后一个,
+			 *		则取extent下一个extent中的@ee_block
+			 */
 			if (path[depth].p_ext &&
 				path[depth].p_ext !=
 					EXT_LAST_EXTENT(path[depth].p_hdr))
@@ -1964,6 +2004,8 @@ static void ext4_ext_try_to_merge(handle_t *handle,
  * such that there will be no overlap, and then returns 1.
  * If there is no overlap found, it returns 0.
  */
+
+/* OyTao: 检查是否与已经存在的cluster是否存在overlap */
 static unsigned int ext4_ext_check_overlap(struct ext4_sb_info *sbi,
 					   struct inode *inode,
 					   struct ext4_extent *newext,
@@ -1978,12 +2020,15 @@ static unsigned int ext4_ext_check_overlap(struct ext4_sb_info *sbi,
 	depth = ext_depth(inode);
 	if (!path[depth].p_ext)
 		goto out;
+
+	/* OyTao: 查找当前的extent对应cluster block idx */
 	b2 = EXT4_LBLK_CMASK(sbi, le32_to_cpu(path[depth].p_ext->ee_block));
 
 	/*
 	 * get the next allocated block if the extent in the path
 	 * is before the requested block(s)
 	 */
+	/* OyTao: next cluster block idx */
 	if (b2 < b1) {
 		b2 = ext4_ext_next_allocated_block(path);
 		if (b2 == EXT_MAX_BLOCKS)
@@ -1992,6 +2037,7 @@ static unsigned int ext4_ext_check_overlap(struct ext4_sb_info *sbi,
 	}
 
 	/* check for wrap through zero on extent logical start block*/
+	/* OyTao： TODO */
 	if (b1 + len1 < b1) {
 		len1 = EXT_MAX_BLOCKS - b1;
 		newext->ee_len = cpu_to_le16(len1);
@@ -2003,6 +2049,13 @@ static unsigned int ext4_ext_check_overlap(struct ext4_sb_info *sbi,
 		newext->ee_len = cpu_to_le16(b2 - b1);
 		ret = 1;
 	}
+
+	/* OyTao: 
+	 * case 1: b1 < b2 && b1 + len1 < b2, 表示没有overlap 
+	 * case 2: b1 > b2 && b1 + len1 < next_b2,　表示没有overlap
+	 */
+
+
 out:
 	return ret;
 }
@@ -3767,10 +3820,12 @@ static int ext4_split_convert_extents(handle_t *handle,
 		  __func__, inode->i_ino,
 		  (unsigned long long)map->m_lblk, map->m_len);
 
+	/* OyTao: */
 	eof_block = (inode->i_size + inode->i_sb->s_blocksize - 1) >>
 		inode->i_sb->s_blocksize_bits;
 	if (eof_block < map->m_lblk + map->m_len)
 		eof_block = map->m_lblk + map->m_len;
+
 	/*
 	 * It is safe to convert extent to initialized via explicit
 	 * zeroout only if extent is fully insde i_size or new_size.
@@ -3783,12 +3838,14 @@ static int ext4_split_convert_extents(handle_t *handle,
 	/* Convert to unwritten */
 	if (flags & EXT4_GET_BLOCKS_CONVERT_UNWRITTEN) {
 		split_flag |= EXT4_EXT_DATA_VALID1;
+		
 	/* Convert to initialized */
 	} else if (flags & EXT4_GET_BLOCKS_CONVERT) {
 		split_flag |= ee_block + ee_len <= eof_block ?
 			      EXT4_EXT_MAY_ZEROOUT : 0;
 		split_flag |= (EXT4_EXT_MARK_UNWRIT2 | EXT4_EXT_DATA_VALID2);
 	}
+
 	flags |= EXT4_GET_BLOCKS_PRE_IO;
 	return ext4_split_extent(handle, inode, ppath, map, split_flag, flags);
 }
@@ -4283,6 +4340,14 @@ out2:
  * ext4_ext_map_blocks() will then allocate one or more new clusters
  * by calling ext4_mb_new_blocks().
  */
+
+/* 
+ * OyTao: 如果要分配的与extent是在同一个cluster, 
+ * 则可以在当前的cluster中分配剩余的部分。
+ * |=====| 表示可以在当前cluster中分配的大小,修改map中的@map_len
+ *
+ * 如果不在一个cluster中，则返回0
+ */
 static int get_implied_cluster_alloc(struct super_block *sb,
 				     struct ext4_map_blocks *map,
 				     struct ext4_extent *ex,
@@ -4316,7 +4381,7 @@ static int get_implied_cluster_alloc(struct super_block *sb,
 		 *   |--------- cluster # N-------------|
 		 *		       |------- extent ----|
 		 *	   |--- requested region ---|
-		 *	   |===========|
+		 *	   |=======|
 		 */
 
 		if (map->m_lblk < ee_block)
@@ -4407,7 +4472,6 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 
 	/*
 	 * OyTao: 在ext4_find_extent中，申请的path的长度是depth + 2,
-	 * 在path[depth]中存放的是叶子节点中查找到的physical block idx.
 	 * path[depth]中的p_ext存放的是在叶子节点中找到包含block idx的ext4_extent
 	 */
 	ex = path[depth].p_ext;
@@ -4418,7 +4482,6 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 
 		unsigned short ee_len;
 
-
 		/*
 		 * unwritten extents are treated as holes, except that
 		 * we split out initialized portions during a write.
@@ -4428,8 +4491,10 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 		trace_ext4_ext_show_extent(inode, ee_block, ee_start, ee_len);
 
 		/* if found extent covers block, simply return it */
+		/* OyTao: 如果找到对应的block */
 		if (in_range(map->m_lblk, ee_block, ee_len)) {
 
+			/* OyTao: 对应的physical block idx */
 			newblock = map->m_lblk - ee_block + ee_start;
 
 			/* number of remaining blocks in the extent */
@@ -4442,6 +4507,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 			 * If the extent is initialized check whether the
 			 * caller wants to convert it to unwritten.
 			 */
+			/* OyTao: TODO */
 			if ((!ext4_ext_is_unwritten(ex)) &&
 			    (flags & EXT4_GET_BLOCKS_CONVERT_UNWRITTEN)) {
 				allocated = convert_initialized_extent(
@@ -4466,6 +4532,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	 * requested block isn't allocated yet;
 	 * we couldn't try to create block if create flag is zero
 	 */
+	/* OyTao: 没有找到对应的block, 并且不需要分配新的block TODO */
 	if ((flags & EXT4_GET_BLOCKS_CREATE) == 0) {
 		ext4_lblk_t hole_start, hole_len;
 
@@ -4489,6 +4556,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	/*
 	 * Okay, we need to do block allocation.
 	 */
+	/* OyTao: 开始分配block */
 	newex.ee_block = cpu_to_le32(map->m_lblk);
 	cluster_offset = EXT4_LBLK_COFF(sbi, map->m_lblk);
 
@@ -4496,6 +4564,8 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	 * If we are doing bigalloc, check to see if the extent returned
 	 * by ext4_find_extent() implies a cluster we can use.
 	 */
+
+	/* OyTao: 尝试在left extent,已经分配的cluster中去分配, map->m_len表示分配成功的大小 */
 	if (cluster_offset && ex &&
 	    get_implied_cluster_alloc(inode->i_sb, map, ex, path)) {
 		ar.len = allocated = map->m_len;
@@ -4505,8 +4575,12 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	}
 
 	/* find neighbour allocated blocks */
+	/*
+	 * OyTao:根据查找的@m_lblk已经在extent tree查找的path,寻找最近的allocated
+	 * left and right extent
+	 */
 	ar.lleft = map->m_lblk;
-	err = ext4_ext_search_left(inode, path, &ar.lleft, &ar.pleft);
+	err = ext4_ext_search_left(inode, path, &arlleft, &ar.pleft);
 	if (err)
 		goto out2;
 	ar.lright = map->m_lblk;
@@ -4515,8 +4589,10 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	if (err)
 		goto out2;
 
+
 	/* Check if the extent after searching to the right implies a
 	 * cluster we can use. */
+	/* OyTao: 尝试在right extent中，检查是否可以在cluster分配 */
 	if ((sbi->s_cluster_ratio > 1) && ex2 &&
 	    get_implied_cluster_alloc(inode->i_sb, map, ex2, path)) {
 		ar.len = allocated = map->m_len;
@@ -4531,6 +4607,10 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	 * EXT_INIT_MAX_LEN and for an unwritten extent this limit is
 	 * EXT_UNWRITTEN_MAX_LEN.
 	 */
+	/* OyTao:
+	 * 如果设置了EXT4_GET_BLOCKS_UNWRIT_EXT，最大的长度是EXT_UNWRITTEN_MAX_LEN
+	 * 如果没有设置UNWRITE_EXT flag，则最大长度是EXT_INIT_MAX_LEN
+	 */
 	if (map->m_len > EXT_INIT_MAX_LEN &&
 	    !(flags & EXT4_GET_BLOCKS_UNWRIT_EXT))
 		map->m_len = EXT_INIT_MAX_LEN;
@@ -4539,8 +4619,14 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 		map->m_len = EXT_UNWRITTEN_MAX_LEN;
 
 	/* Check if we can really insert (m_lblk)::(m_lblk + m_len) extent */
+	/*
+	 * OyTao: @ee_block已经赋值了map->m_block, 
+	 * 与left, right extent对应的cluster检查overlap
+	 */
 	newex.ee_len = cpu_to_le16(map->m_len);
 	err = ext4_ext_check_overlap(sbi, inode, &newex, path);
+
+	/* OyTao: @allocated 需要分配的大小 */
 	if (err)
 		allocated = ext4_ext_get_actual_len(&newex);
 	else
@@ -4558,21 +4644,35 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	 * needed so that future calls to get_implied_cluster_alloc()
 	 * work correctly.
 	 */
+	/* OyTao: offset是新分配的cluster与logical block之间的偏移。
+	 * 分配时候，需要将cluster start block --> logical block + len都分配。
+	 * */
 	offset = EXT4_LBLK_COFF(sbi, map->m_lblk);
+
+	/* OyTao: clusters 的numbers */
 	ar.len = EXT4_NUM_B2C(sbi, offset+allocated);
+
+	/* OyTao: 修正分配参数 */
 	ar.goal -= offset;
 	ar.logical -= offset;
+
+	/* OyTao: TODO */
 	if (S_ISREG(inode->i_mode))
 		ar.flags = EXT4_MB_HINT_DATA;
 	else
 		/* disable in-core preallocation for non-regular files */
 		ar.flags = 0;
+
+	/* OyTao: 设置分配参数 */
 	if (flags & EXT4_GET_BLOCKS_NO_NORMALIZE)
 		ar.flags |= EXT4_MB_HINT_NOPREALLOC;
+
 	if (flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE)
 		ar.flags |= EXT4_MB_DELALLOC_RESERVED;
+
 	if (flags & EXT4_GET_BLOCKS_METADATA_NOFAIL)
 		ar.flags |= EXT4_MB_USE_RESERVED;
+
 	newblock = ext4_mb_new_blocks(handle, &ar, &err);
 	if (!newblock)
 		goto out2;
@@ -4583,6 +4683,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	ar.len = EXT4_C2B(sbi, ar.len) - offset;
 	if (ar.len > allocated)
 		ar.len = allocated;
+
 
 got_allocated_blocks:
 	/* try to insert new extent into found leaf and return */

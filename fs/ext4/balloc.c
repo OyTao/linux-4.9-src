@@ -850,6 +850,8 @@ static unsigned ext4_num_base_meta_clusters(struct super_block *sb,
  *	Return the ideal location to start allocating blocks for a
  *	newly created inode.
  */
+/* OyTao: 根据inode所在的block group，返回随机的goal block idx ,
+ * 如果是DelayAllocate， 则设置为block group first data block */
 ext4_fsblk_t ext4_inode_to_goal_block(struct inode *inode)
 {
 	struct ext4_inode_info *ei = EXT4_I(inode);
@@ -860,6 +862,8 @@ ext4_fsblk_t ext4_inode_to_goal_block(struct inode *inode)
 	ext4_fsblk_t last_block;
 
 	block_group = ei->i_block_group;
+
+	/* OyTao: flexible group 机制 */ 
 	if (flex_size >= EXT4_FLEX_SIZE_DIR_ALLOC_SCHEME) {
 		/*
 		 * If there are at least EXT4_FLEX_SIZE_DIR_ALLOC_SCHEME
@@ -873,21 +877,29 @@ ext4_fsblk_t ext4_inode_to_goal_block(struct inode *inode)
 		if (S_ISREG(inode->i_mode))
 			block_group++;
 	}
+
+	/* OyTao: 获取inode所在的block group第一个data block */
 	bg_start = ext4_group_first_block_no(inode->i_sb, block_group);
+
+	/* OyTao: */
 	last_block = ext4_blocks_count(EXT4_SB(inode->i_sb)->s_es) - 1;
 
 	/*
 	 * If we are doing delayed allocation, we don't need take
 	 * colour into account.
 	 */
+	/* OyTao: 如果设置了延迟分配，则返回对应的第一个data block位置 */
 	if (test_opt(inode->i_sb, DELALLOC))
 		return bg_start;
 
+	/* OyTao: 增加colour,减少在同一个block group内部申请goal的竞争 */
+	/* OyTao: TODO why bg_start + BLOCKS_PER_GROUP <　last_block */
 	if (bg_start + EXT4_BLOCKS_PER_GROUP(inode->i_sb) <= last_block)
 		colour = (current->pid % 16) *
 			(EXT4_BLOCKS_PER_GROUP(inode->i_sb) / 16);
 	else
 		colour = (current->pid % 16) * ((last_block - bg_start) / 16);
+
 	return bg_start + colour;
 }
 
