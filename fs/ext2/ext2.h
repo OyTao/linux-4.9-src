@@ -87,6 +87,7 @@ struct ext2_sb_info {
 	struct buffer_head ** s_group_desc;
 	unsigned long  s_mount_opt;
 	unsigned long s_sb_block;
+
 	kuid_t s_resuid;
 	kgid_t s_resgid;
 	unsigned short s_mount_state;

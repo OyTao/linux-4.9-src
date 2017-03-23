@@ -286,7 +286,10 @@ static inline int dquot_alloc_space_nodirty(struct inode *inode, qsize_t nr)
 
 static inline void dquot_alloc_space_nofail(struct inode *inode, qsize_t nr)
 {
+	/* OyTao: TODO */
 	__dquot_alloc_space(inode, nr, DQUOT_SPACE_WARN|DQUOT_SPACE_NOFAIL);
+	
+	/* OyTao: TODO */
 	mark_inode_dirty_sync(inode);
 }
 
@@ -331,6 +334,7 @@ static inline int dquot_prealloc_block(struct inode *inode, qsize_t nr)
 	int ret;
 
 	ret = dquot_prealloc_block_nodirty(inode, nr);
+
 	if (!ret)
 		mark_inode_dirty_sync(inode);
 	return ret;

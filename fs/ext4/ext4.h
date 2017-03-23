@@ -110,12 +110,16 @@ enum SHIFT_DIRECTION {
 
 /* prefer goal again. length */
 #define EXT4_MB_HINT_MERGE		0x0001
+
 /* blocks already reserved */
 #define EXT4_MB_HINT_RESERVED		0x0002
+
 /* metadata is being allocated */
 #define EXT4_MB_HINT_METADATA		0x0004
+
 /* first blocks in the file */
 #define EXT4_MB_HINT_FIRST		0x0008
+
 /* search for the best chunk */
 #define EXT4_MB_HINT_BEST		0x0010
 
@@ -127,16 +131,22 @@ enum SHIFT_DIRECTION {
 
 /* allocate for locality group */
 #define EXT4_MB_HINT_GROUP_ALLOC	0x0080
+
 /* allocate goal blocks or none */
 #define EXT4_MB_HINT_GOAL_ONLY		0x0100
+
 /* goal is meaningful */
 #define EXT4_MB_HINT_TRY_GOAL		0x0200
+
 /* blocks already pre-reserved by delayed allocation */
 #define EXT4_MB_DELALLOC_RESERVED	0x0400
+
 /* We are doing stream allocation */
 #define EXT4_MB_STREAM_ALLOC		0x0800
+
 /* Use reserved root blocks if needed */
 #define EXT4_MB_USE_ROOT_BLOCKS		0x1000
+
 /* Use blocks from reserved pool */
 #define EXT4_MB_USE_RESERVED		0x2000
 
@@ -145,9 +155,11 @@ struct ext4_allocation_request {
 	struct inode *inode;
 
 	/* how many blocks we want to allocate */
-	unsigned int len;
+	/* OyTao: 如果是配置了cluster,len这是需要分配的clusters的数目 */
+	unsigned int len; /* OyTao: in cluster units */
 
 	/* logical block in target inode */
+	/* OyTao: block logical idx */
 	ext4_lblk_t logical;
 
 	/* the closest logical allocated block to the left */
@@ -1260,8 +1272,12 @@ extern void ext4_set_bits(void *bm, int cur, int len);
  */
 struct ext4_super_block {
 /*00*/	__le32	s_inodes_count;		/* Inodes count */
+
 	__le32	s_blocks_count_lo;	/* Blocks count */
+
+	/* OyTao: reserved block 低32位 */
 	__le32	s_r_blocks_count_lo;	/* Reserved blocks count */
+
 	__le32	s_free_blocks_count_lo;	/* Free blocks count */
 
 /*10*/	__le32	s_free_inodes_count;	/* Free inodes count */
@@ -1332,12 +1348,17 @@ struct ext4_super_block {
 	__u8	s_jnl_backup_type;
 	__le16  s_desc_size;		/* size of group descriptor */
 /*100*/	__le32	s_default_mount_opts;
+
 	__le32	s_first_meta_bg;	/* First metablock block group */
+
 	__le32	s_mkfs_time;		/* When the filesystem was created */
 	__le32	s_jnl_blocks[17];	/* Backup of the journal inode */
 	/* 64bit support valid if EXT4_FEATURE_COMPAT_64BIT */
 /*150*/	__le32	s_blocks_count_hi;	/* Blocks count */
+
+	/* OyTao: reserved block 高32位 */
 	__le32	s_r_blocks_count_hi;	/* Reserved blocks count */
+
 	__le32	s_free_blocks_count_hi;	/* Free blocks count */
 	__le16	s_min_extra_isize;	/* All inodes have at least # bytes */
 	__le16	s_want_extra_isize; 	/* New inodes should reserve # bytes */
@@ -1429,14 +1450,20 @@ struct ext4_sb_info {
 	unsigned int s_cluster_bits;	/* log2 of s_cluster_ratio */
 	loff_t s_bitmap_maxbytes;	/* max bytes for bitmap files */
 	struct buffer_head * s_sbh;	/* Buffer containing the super block */
+
 	struct ext4_super_block *s_es;	/* Pointer to the super block in the buffer */
+
 	struct buffer_head **s_group_desc;
 	unsigned int s_mount_opt;
 	unsigned int s_mount_opt2;
 	unsigned int s_mount_flags;
 	unsigned int s_def_mount_opt;
+
 	ext4_fsblk_t s_sb_block;
+
+	/* OyTao: TODO */
 	atomic64_t s_resv_clusters;
+
 	kuid_t s_resuid;
 	kgid_t s_resgid;
 	unsigned short s_mount_state;
@@ -1452,10 +1479,12 @@ struct ext4_sb_info {
 	u32 s_hash_seed[4];
 	int s_def_hash_version;
 	int s_hash_unsigned;	/* 3 if hash should be signed, 0 if not */
+
 	struct percpu_counter s_freeclusters_counter;
 	struct percpu_counter s_freeinodes_counter;
 	struct percpu_counter s_dirs_counter;
 	struct percpu_counter s_dirtyclusters_counter;
+
 	struct blockgroup_lock *s_blockgroup_lock;
 	struct proc_dir_entry *s_proc;
 	struct kobject s_kobj;
@@ -1490,11 +1519,24 @@ struct ext4_sb_info {
 #endif
 
 	/* for buddy allocator */
+	/*
+	 * OyTao: s_group_info描述了所有Group的信息。
+	 *                 每一个block包含的group info信息     每一个group对应的info
+	 * s_group_info --> | struct ext4_group_info ** | --> |struct ext4_group_info *|
+	 *				    | struct ext4_group_info ** |     |struct ext4_group_info *|
+	 *				    |		     ---		    |
+	 *
+	 * 每一个group对应的ext4_group_info然后从对应的groupinfo_cache中分配。
+	 * 参考函数ext4_mb_add_groupinfo
+	 */
 	struct ext4_group_info ***s_group_info;
+
 	struct inode *s_buddy_cache;
 	spinlock_t s_md_lock;
+
 	unsigned short *s_mb_offsets;
 	unsigned int *s_mb_maxs;
+
 	unsigned int s_group_info_size;
 	unsigned int s_mb_free_pending;
 
@@ -2939,18 +2981,30 @@ static inline int ext4_update_inode_size(struct inode *inode, loff_t newsize)
 int ext4_update_disksize_before_punch(struct inode *inode, loff_t offset,
 				      loff_t len);
 
+/* OyTao: TODO*/
 struct ext4_group_info {
 	unsigned long   bb_state;
+
 	struct rb_root  bb_free_root;
+
 	ext4_grpblk_t	bb_first_free;	/* first free block */
+
 	ext4_grpblk_t	bb_free;	/* total free blocks */
+
 	ext4_grpblk_t	bb_fragments;	/* nr of freespace fragments */
+
 	ext4_grpblk_t	bb_largest_free_order;/* order of largest frag in BG */
+
 	struct          list_head bb_prealloc_list;
+
 #ifdef DOUBLE_CHECK
 	void            *bb_bitmap;
 #endif
 	struct rw_semaphore alloc_sem;
+
+	/* 
+	 * OyTao: bb_counters 大小= blcoksize_bits + 2
+	 */
 	ext4_grpblk_t	bb_counters[];	/* Nr of free power-of-two-block
 					 * regions, index is order.
 					 * bb_counters[3] = 5 means

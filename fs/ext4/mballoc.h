@@ -136,10 +136,13 @@ struct ext4_free_extent {
 
 	ext4_lblk_t fe_logical;
 
+	/* OyTao:在group中的cluster idx */
 	ext4_grpblk_t fe_start;	/* In cluster units */
 
+	/* OyTao: group idx */
 	ext4_group_t fe_group;
 
+	/* OyTao:需要分配的cluster数目 */
 	ext4_grpblk_t fe_len;	/* In cluster units */
 };
 
@@ -152,12 +155,16 @@ struct ext4_free_extent {
  *   order value.ie, fls(pa_free)-1;
  */
 #define PREALLOC_TB_SIZE 10
+
+/* OyTao: TODO */
 struct ext4_locality_group {
 	/* for allocator */
 	/* to serialize allocates */
 	struct mutex		lg_mutex;
+
 	/* list of preallocations */
 	struct list_head	lg_prealloc_list[PREALLOC_TB_SIZE];
+
 	spinlock_t		lg_prealloc_lock;
 };
 

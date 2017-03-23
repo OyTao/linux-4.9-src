@@ -4636,6 +4636,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	ar.inode = inode;
 	ar.goal = ext4_ext_find_goal(inode, path, map->m_lblk);
 	ar.logical = map->m_lblk;
+
 	/*
 	 * We calculate the offset from the beginning of the cluster
 	 * for the logical block number, since when we allocate a
@@ -4673,11 +4674,14 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	if (flags & EXT4_GET_BLOCKS_METADATA_NOFAIL)
 		ar.flags |= EXT4_MB_USE_RESERVED;
 
+	/* OyTao: ext4 mballoc new blocks */
 	newblock = ext4_mb_new_blocks(handle, &ar, &err);
 	if (!newblock)
 		goto out2;
+
 	ext_debug("allocate new block: goal %llu, found %llu/%u\n",
 		  ar.goal, newblock, allocated);
+
 	free_on_err = 1;
 	allocated_clusters = ar.len;
 	ar.len = EXT4_C2B(sbi, ar.len) - offset;

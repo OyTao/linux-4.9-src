@@ -2557,6 +2557,9 @@ static loff_t ext4_max_bitmap_size(int bits, int has_huge_files)
 	return res;
 }
 
+/*
+ * OyTao: TODO
+ */
 static ext4_fsblk_t descriptor_loc(struct super_block *sb,
 				   ext4_fsblk_t logical_sb_block, int nr)
 {
@@ -3303,6 +3306,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	struct ext4_super_block *es = NULL;
 	struct ext4_sb_info *sbi;
 	ext4_fsblk_t block;
+	/* OyTao:　TODO　*/
 	ext4_fsblk_t sb_block = get_sb_block(&data);
 	ext4_fsblk_t logical_sb_block;
 	unsigned long offset = 0;
@@ -3605,6 +3609,8 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		}
 
 		brelse(bh);
+
+		/* OYTao: TODO */
 		logical_sb_block = sb_block * EXT4_MIN_BLOCK_SIZE;
 		offset = do_div(logical_sb_block, blocksize);
 		bh = sb_bread_unmovable(sb, logical_sb_block);
@@ -3796,6 +3802,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 			 ext4_blocks_count(es));
 		goto failed_mount;
 	}
+
 	blocks_count = (ext4_blocks_count(es) -
 			le32_to_cpu(es->s_first_data_block) +
 			EXT4_BLOCKS_PER_GROUP(sb) - 1);
@@ -3809,11 +3816,13 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		       EXT4_BLOCKS_PER_GROUP(sb));
 		goto failed_mount;
 	}
+
 	sbi->s_groups_count = blocks_count;
 	sbi->s_blockfile_groups = min_t(ext4_group_t, sbi->s_groups_count,
 			(EXT4_MAX_BLOCK_FILE_PHYS / EXT4_BLOCKS_PER_GROUP(sb)));
 	db_count = (sbi->s_groups_count + EXT4_DESC_PER_BLOCK(sb) - 1) /
 		   EXT4_DESC_PER_BLOCK(sb);
+	/* OyTao: 为s_group_desc分配内存, @db_count表示group_desc需要占用几个block */ 
 	sbi->s_group_desc = ext4_kvmalloc(db_count *
 					  sizeof(struct buffer_head *),
 					  GFP_KERNEL);
@@ -3823,10 +3832,18 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_mount;
 	}
 
+	/* OyTao: TODO */
 	bgl_lock_init(sbi->s_blockgroup_lock);
 
+	/* OyTao: 初始化s_group_desc结构 */
 	for (i = 0; i < db_count; i++) {
+		/* OyTao: 确定对应group descriptor 的block idx */
 		block = descriptor_loc(sb, logical_sb_block, i);
+
+		/* 
+		 * OyTao:get buffer head 为group descriptor,从磁盘上同步读，
+		 * 对应的buffer head包含有效数据。
+		 */
 		sbi->s_group_desc[i] = sb_bread_unmovable(sb, block);
 		if (!sbi->s_group_desc[i]) {
 			ext4_msg(sb, KERN_ERR,
@@ -3835,6 +3852,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 			goto failed_mount2;
 		}
 	}
+
 	if (!ext4_check_descriptors(sb, logical_sb_block, &first_not_zeroed)) {
 		ext4_msg(sb, KERN_ERR, "group descriptors corrupted!");
 		ret = -EFSCORRUPTED;
@@ -4076,6 +4094,7 @@ no_journal:
 	}
 
 	ext4_ext_init(sb);
+
 	err = ext4_mb_init(sb);
 	if (err) {
 		ext4_msg(sb, KERN_ERR, "failed to initialize mballoc (%d)",
@@ -4083,9 +4102,11 @@ no_journal:
 		goto failed_mount5;
 	}
 
+	/* OyTao:　TODO (important) */
 	block = ext4_count_free_clusters(sb);
 	ext4_free_blocks_count_set(sbi->s_es, 
 				   EXT4_C2B(sbi, block));
+
 	err = percpu_counter_init(&sbi->s_freeclusters_counter, block,
 				  GFP_KERNEL);
 	if (!err) {
@@ -4094,6 +4115,7 @@ no_journal:
 		err = percpu_counter_init(&sbi->s_freeinodes_counter, freei,
 					  GFP_KERNEL);
 	}
+
 	if (!err)
 		err = percpu_counter_init(&sbi->s_dirs_counter,
 					  ext4_count_dirs(sb), GFP_KERNEL);

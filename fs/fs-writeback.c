@@ -2092,6 +2092,7 @@ void __mark_inode_dirty(struct inode *inode, int flags)
 	}
 	if (flags & I_DIRTY_INODE)
 		flags &= ~I_DIRTY_TIME;
+
 	dirtytime = flags & I_DIRTY_TIME;
 
 	/*

@@ -354,7 +354,10 @@ static struct kmem_cache *ext4_free_data_cachep;
 /* We create slab caches for groupinfo data structures based on the
  * superblock block size.  There will be one per mounted filesystem for
  * each unique s_blocksize_bits */
+
+/* OyTao: */
 #define NR_GRPINFO_CACHES 8
+/* OyTao: ext4_groupinfo_caches[0] 是EXT4_MIN_BLOCK_LOG_SIZE (1k)大小块的cache */
 static struct kmem_cache *ext4_groupinfo_caches[NR_GRPINFO_CACHES];
 
 static const char *ext4_groupinfo_slab_names[NR_GRPINFO_CACHES] = {
@@ -2369,17 +2372,22 @@ static struct kmem_cache *get_groupinfo_cache(int blocksize_bits)
  * Allocate the top-level s_group_info array for the specified number
  * of groups
  */
+/* 
+ * OyTao:分配ngroups所需要的ext4_group_info **内存
+ */
 int ext4_mb_alloc_groupinfo(struct super_block *sb, ext4_group_t ngroups)
 {
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 	unsigned size;
 	struct ext4_group_info ***new_groupinfo;
 
+	/* OyTao: 计算ngroups需要几个blocks */
 	size = (ngroups + EXT4_DESC_PER_BLOCK(sb) - 1) >>
 		EXT4_DESC_PER_BLOCK_BITS(sb);
 	if (size <= sbi->s_group_info_size)
 		return 0;
 
+	/* OyTao: 分配@size个block ext4_group_info **结构 */
 	size = roundup_pow_of_two(sizeof(*sbi->s_group_info) * size);
 	new_groupinfo = ext4_kvzalloc(size, GFP_KERNEL);
 	if (!new_groupinfo) {
@@ -2393,12 +2401,17 @@ int ext4_mb_alloc_groupinfo(struct super_block *sb, ext4_group_t ngroups)
 	}
 	sbi->s_group_info = new_groupinfo;
 	sbi->s_group_info_size = size / sizeof(*sbi->s_group_info);
+
 	ext4_debug("allocated s_groupinfo array for %d meta_bg's\n", 
 		   sbi->s_group_info_size);
 	return 0;
 }
 
 /* Create and initialize ext4_group_info data for the given group. */
+/*
+ * OyTao:为对应的group创建group_info信息并初始化。
+ * TODO (bb_bitmap, bb_counters, bb_fragments没有在本函数中初始化)
+ */
 int ext4_mb_add_groupinfo(struct super_block *sb, ext4_group_t group,
 			  struct ext4_group_desc *desc)
 {
@@ -2406,12 +2419,19 @@ int ext4_mb_add_groupinfo(struct super_block *sb, ext4_group_t group,
 	int metalen = 0;
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 	struct ext4_group_info **meta_group_info;
+
 	struct kmem_cache *cachep = get_groupinfo_cache(sb->s_blocksize_bits);
 
 	/*
 	 * First check if this group is the first of a reserved block.
 	 * If it's true, we have to allocate a new table of pointers
 	 * to ext4_group_info structures
+	 */
+	/* OyTao:
+	 * 如果是某一个block中的group,则需要分配在一个block中所有的group_descs
+	 * group_info。(目前没有分配真实的group_info 空间，只是分配了个block包含
+	 * 所有的group_info的指针。
+	 * 每一个group_desc对应的group_info会在后面的流程中分配 
 	 */
 	if (group % EXT4_DESC_PER_BLOCK(sb) == 0) {
 		metalen = sizeof(*meta_group_info) <<
@@ -2426,15 +2446,19 @@ int ext4_mb_add_groupinfo(struct super_block *sb, ext4_group_t group,
 			meta_group_info;
 	}
 
+	/* OyTao: 确认对应group的group_info 位置 */
 	meta_group_info =
 		sbi->s_group_info[group >> EXT4_DESC_PER_BLOCK_BITS(sb)];
 	i = group & (EXT4_DESC_PER_BLOCK(sb) - 1);
 
+	/* OyTao: 为某一个确定的group分配group_info */
 	meta_group_info[i] = kmem_cache_zalloc(cachep, GFP_NOFS);
 	if (meta_group_info[i] == NULL) {
 		ext4_msg(sb, KERN_ERR, "can't allocate buddy mem");
 		goto exit_group_info;
 	}
+
+	/* OyTao: 初始化bb_state of group info */
 	set_bit(EXT4_GROUP_INFO_NEED_INIT_BIT,
 		&(meta_group_info[i]->bb_state));
 
@@ -2442,6 +2466,7 @@ int ext4_mb_add_groupinfo(struct super_block *sb, ext4_group_t group,
 	 * initialize bb_free to be able to skip
 	 * empty groups without initialization
 	 */
+	/* OyTao: 初始化对应group中的total free blocks TODO */
 	if (desc->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
 		meta_group_info[i]->bb_free =
 			ext4_free_clusters_after_init(sb, group, desc);
@@ -2450,6 +2475,7 @@ int ext4_mb_add_groupinfo(struct super_block *sb, ext4_group_t group,
 			ext4_free_group_clusters(sb, desc);
 	}
 
+	/* OyTao: 初始化 (bb_fragments 还有bb_bitmap，bb_counts没有初始化 TODO) */
 	INIT_LIST_HEAD(&meta_group_info[i]->bb_prealloc_list);
 	init_rwsem(&meta_group_info[i]->alloc_sem);
 	meta_group_info[i]->bb_free_root = RB_ROOT;
@@ -2481,6 +2507,10 @@ exit_meta_group_info:
 	return -ENOMEM;
 } /* ext4_mb_add_groupinfo */
 
+/*
+ * OyTao: 主要是对ext4中的groups申请ext4_group_info,初始化部分数据域，同时加入
+ * 到ext4_sb_info中的s_group_info中。
+ */
 static int ext4_mb_init_backend(struct super_block *sb)
 {
 	ext4_group_t ngroups = ext4_get_groups_count(sb);
@@ -2490,10 +2520,12 @@ static int ext4_mb_init_backend(struct super_block *sb)
 	struct ext4_group_desc *desc;
 	struct kmem_cache *cachep;
 
+	/* OyTao: 为ext4 super info中的s_group_info分配内存 */
 	err = ext4_mb_alloc_groupinfo(sb, ngroups);
 	if (err)
 		return err;
 
+	/* OyTao: 为buddy cache准备 TODO */
 	sbi->s_buddy_cache = new_inode(sb);
 	if (sbi->s_buddy_cache == NULL) {
 		ext4_msg(sb, KERN_ERR, "can't get new inode");
@@ -2503,14 +2535,29 @@ static int ext4_mb_init_backend(struct super_block *sb)
 	 * use EXT4_BAD_INO for the buddy cache inode number.  This inode is
 	 * not in the inode hash, so it should never be found by iget(), but
 	 * this will avoid confusion if it ever shows up during debugging. */
+
+	/* OyTao: 初始化buddy cache inode nubmer 为EXT4_BAD_INO,避免iget found */
 	sbi->s_buddy_cache->i_ino = EXT4_BAD_INO;
+
+	/* OyTao: TODO */
 	EXT4_I(sbi->s_buddy_cache)->i_disksize = 0;
+
+	/*
+	 * OyTao: 为每一个group获取对应的group descriptor(磁盘），同时分配
+	 * ext4_group_info,并初始化部分数据域。
+	 */
 	for (i = 0; i < ngroups; i++) {
+		/* OyTao: 获得group对应的descriptor buffer head */
 		desc = ext4_get_group_desc(sb, i, NULL);
 		if (desc == NULL) {
 			ext4_msg(sb, KERN_ERR, "can't read descriptor %u", i);
 			goto err_freebuddy;
 		}
+		/*
+		 * OyTao:为对应的group分配ext4_group_info结构，同时将其放入到
+		 * s_group_info of ext4_sb_info中指定位置。
+		 * 具体的信息可以参考s_group_info 描述
+		 */
 		if (ext4_mb_add_groupinfo(sb, i, desc) != 0)
 			goto err_freebuddy;
 	}
@@ -2545,6 +2592,8 @@ static int ext4_groupinfo_create_slab(size_t size)
 {
 	static DEFINE_MUTEX(ext4_grpinfo_slab_create_mutex);
 	int slab_size;
+
+	/* OyTao: 根据@size计算对应的cache idx */
 	int blocksize_bits = order_base_2(size);
 	int cache_index = blocksize_bits - EXT4_MIN_BLOCK_LOG_SIZE;
 	struct kmem_cache *cachep;
@@ -2561,9 +2610,13 @@ static int ext4_groupinfo_create_slab(size_t size)
 		return 0;	/* Already created */
 	}
 
+	/* 
+	 * OyTao: struct ext4_group_info + (blocksize_bits + 2)个 bb_counts 大小
+	 */
 	slab_size = offsetof(struct ext4_group_info,
 				bb_counters[blocksize_bits + 2]);
 
+	/* OyTao: 为@size对应的cache_index分配ext4_group_info */
 	cachep = kmem_cache_create(ext4_groupinfo_slab_names[cache_index],
 					slab_size, 0, SLAB_RECLAIM_ACCOUNT,
 					NULL);
@@ -2588,6 +2641,7 @@ int ext4_mb_init(struct super_block *sb)
 	unsigned max;
 	int ret;
 
+	/* OyTao: s_blocksize_bits + 2 TODO */
 	i = (sb->s_blocksize_bits + 2) * sizeof(*sbi->s_mb_offsets);
 
 	sbi->s_mb_offsets = kmalloc(i, GFP_KERNEL);
@@ -2603,11 +2657,13 @@ int ext4_mb_init(struct super_block *sb)
 		goto out;
 	}
 
+	/* OyTao: 创建以blocksize大小的cache slab */
 	ret = ext4_groupinfo_create_slab(sb->s_blocksize);
 	if (ret < 0)
 		goto out;
 
 	/* order 0 is regular bitmap */
+	/* OyTao: TODO */
 	sbi->s_mb_maxs[0] = sb->s_blocksize << 3;
 	sbi->s_mb_offsets[0] = 0;
 
@@ -2656,18 +2712,23 @@ int ext4_mb_init(struct super_block *sb)
 	 * the stripes.
 	 */
 	if (sbi->s_stripe > 1) {
+		/* OyTao: s_mb_group_prealloc = s_mb_group_prealloc / s_stripe 向上取整 */
 		sbi->s_mb_group_prealloc = roundup(
 			sbi->s_mb_group_prealloc, sbi->s_stripe);
 	}
 
+	/* OyTao: percpu ext4 locality group 分配 */
 	sbi->s_locality_groups = alloc_percpu(struct ext4_locality_group);
 	if (sbi->s_locality_groups == NULL) {
 		ret = -ENOMEM;
 		goto out;
 	}
+
+	/* OyTao: 初始化per-cpu ext4 locality group */
 	for_each_possible_cpu(i) {
 		struct ext4_locality_group *lg;
 		lg = per_cpu_ptr(sbi->s_locality_groups, i);
+
 		mutex_init(&lg->lg_mutex);
 		for (j = 0; j < PREALLOC_TB_SIZE; j++)
 			INIT_LIST_HEAD(&lg->lg_prealloc_list[j]);
@@ -2852,6 +2913,10 @@ static void ext4_free_data_callback(struct super_block *sb,
 
 int __init ext4_init_mballoc(void)
 {
+	/* 
+	 * OyTao: 初始化ext4_prealloc_space, ext4_allocation_context,
+	 * ext4_free_data memory cache.
+	 */
 	ext4_pspace_cachep = KMEM_CACHE(ext4_prealloc_space,
 					SLAB_RECLAIM_ACCOUNT);
 	if (ext4_pspace_cachep == NULL)
@@ -4196,26 +4261,40 @@ ext4_mb_initialize_context(struct ext4_allocation_context *ac,
 		len = EXT4_CLUSTERS_PER_GROUP(sb);
 
 	/* start searching from the goal */
+	/* OyTao: 修正@goal, 如果@goal超出范围，则设置为first_data_block */
 	goal = ar->goal;
 	if (goal < le32_to_cpu(es->s_first_data_block) ||
 			goal >= ext4_blocks_count(es))
 		goal = le32_to_cpu(es->s_first_data_block);
+
+	/*
+	 * OyTao: @group: group idx; @block: @goal在group中某一个cluster的idx */
 	ext4_get_group_no_and_offset(sb, goal, &group, &block);
 
 	/* set up allocation goals */
+	/* 
+	 * OyTao: ar->logical在ext4_ext_map_blocks中，
+	 * 或者其他地方调用ext4_mb_new_blocks的时候，会初始化。
+	 * 对应着在inode中logical block.
+	 */
 	ac->ac_b_ex.fe_logical = EXT4_LBLK_CMASK(sbi, ar->logical);
+
 	ac->ac_status = AC_STATUS_CONTINUE;
 	ac->ac_sb = sb;
 	ac->ac_inode = ar->inode;
 	ac->ac_o_ex.fe_logical = ac->ac_b_ex.fe_logical;
+	
 	ac->ac_o_ex.fe_group = group;
 	ac->ac_o_ex.fe_start = block;
 	ac->ac_o_ex.fe_len = len;
+
 	ac->ac_g_ex = ac->ac_o_ex;
+
 	ac->ac_flags = ar->flags;
 
 	/* we have to define context: we'll we work with a file or
 	 * locality group. this is a policy, actually */
+	/* OyTao: TODO */
 	ext4_mb_group_or_file(ac);
 
 	mb_debug(1, "init ac: %u blocks @ %u, goal %u, flags %x, 2^%d, "
@@ -4455,12 +4534,21 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 			cond_resched();
 			ar->len = ar->len >> 1;
 		}
+
 		if (!ar->len) {
 			*errp = -ENOSPC;
 			return 0;
 		}
+
 		reserv_clstrs = ar->len;
+
+		/* 
+		 * OyTao: 
+		 * 1. 需要检查disk dquot (如果没有配置duqota, 则不处理)
+		 * 2. mark_inode_dirty_sync(inode) or mark_inode_dirty(inode) TODO
+		 */
 		if (ar->flags & EXT4_MB_USE_ROOT_BLOCKS) {
+			/* OyTao: TODO */
 			dquot_alloc_block_nofail(ar->inode,
 						 EXT4_C2B(sbi, ar->len));
 		} else {
@@ -4472,6 +4560,7 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 				ar->len--;
 			}
 		}
+
 		inquota = ar->len;
 		if (ar->len == 0) {
 			*errp = -EDQUOT;
@@ -4479,6 +4568,8 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 		}
 	}
 
+
+	/* OyTao: 分配ext4_allocation_context */
 	ac = kmem_cache_zalloc(ext4_ac_cachep, GFP_NOFS);
 	if (!ac) {
 		ar->len = 0;
@@ -4486,6 +4577,9 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 		goto out;
 	}
 
+	/* OyTao: 初始化ext4_allocation_request @ac,
+	 * 主要是ac_o_ex(ext4_free_extent), ac_lg(ext4_locality_group)以及ac_flags等。
+	 */ 
 	*errp = ext4_mb_initialize_context(ac, ar);
 	if (*errp) {
 		ar->len = 0;
@@ -4493,6 +4587,7 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 	}
 
 	ac->ac_op = EXT4_MB_HISTORY_PREALLOC;
+
 	if (!ext4_mb_use_preallocated(ac)) {
 		ac->ac_op = EXT4_MB_HISTORY_ALLOC;
 		ext4_mb_normalize_request(ac, ar);
@@ -4514,6 +4609,7 @@ repeat:
 			goto errout;
 		}
 	}
+
 	if (likely(ac->ac_status == AC_STATUS_FOUND)) {
 		*errp = ext4_mb_mark_diskspace_used(ac, handle, reserv_clstrs);
 		if (*errp) {
@@ -4537,6 +4633,7 @@ errout:
 		ext4_mb_show_ac(ac);
 	}
 	ext4_mb_release_context(ac);
+
 out:
 	if (ac)
 		kmem_cache_free(ext4_ac_cachep, ac);

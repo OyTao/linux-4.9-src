@@ -1079,6 +1079,10 @@ grow_dev_page(struct block_device *bdev, sector_t block,
 	 */
 	spin_lock(&inode->i_mapping->private_lock);
 
+	/*
+	 * OyTao: hold page. (inc ref count).
+	 * 同时设置pagePrivate标记，将@bh赋给private_data of page.
+	 */
 	link_dev_buffers(page, bh);
 
 	end_block = init_page_buffers(page, bdev, (sector_t)index << sizebits,
@@ -1270,6 +1274,9 @@ void __bforget(struct buffer_head *bh)
 }
 EXPORT_SYMBOL(__bforget);
 
+/*
+ * OyTao: 如果buffer head中没有有效数据，则同步读。
+ */
 static struct buffer_head *__bread_slow(struct buffer_head *bh)
 {
 	lock_buffer(bh);
@@ -1453,6 +1460,7 @@ EXPORT_SYMBOL(__find_get_block);
  */
 /*
  * OyTao: 得到对应block对应的buffer head.可能是NULL。buffer head可能是新创建的。
+ * buffer head中可能不包含最新数据
  */
 struct buffer_head *
 __getblk_gfp(struct block_device *bdev, sector_t block,
@@ -1495,12 +1503,17 @@ EXPORT_SYMBOL(__breadahead);
  *  not to prevent page migration if you set gfp to zero.
  *  It returns NULL if the block was unreadable.
  */
+/*
+ * OyTao: 得到一个buffer head.(包含最新的数据)
+ */
 struct buffer_head *
 __bread_gfp(struct block_device *bdev, sector_t block,
 		   unsigned size, gfp_t gfp)
 {
+	/* OyTao: 获得一个buffer head */
 	struct buffer_head *bh = __getblk_gfp(bdev, block, size, gfp);
 
+	/* OyTao: 如果buffer head中没有有效数据，同步读 */
 	if (likely(bh) && !buffer_uptodate(bh))
 		bh = __bread_slow(bh);
 	return bh;

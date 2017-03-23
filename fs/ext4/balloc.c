@@ -49,6 +49,7 @@ ext4_group_t ext4_get_group_number(struct super_block *sb,
  * Calculate the block group number and offset into the block/cluster
  * allocation bitmap, given a block number
  */
+/* OyTao: 根据block idx @blocknr，计算对应的group idx以及在group中的cluster idx*/
 void ext4_get_group_no_and_offset(struct super_block *sb, ext4_fsblk_t blocknr,
 		ext4_group_t *blockgrpp, ext4_grpblk_t *offsetp)
 {
@@ -56,10 +57,14 @@ void ext4_get_group_no_and_offset(struct super_block *sb, ext4_fsblk_t blocknr,
 	ext4_grpblk_t offset;
 
 	blocknr = blocknr - le32_to_cpu(es->s_first_data_block);
+
+	/* OyTao: TODO */
 	offset = do_div(blocknr, EXT4_BLOCKS_PER_GROUP(sb)) >>
 		EXT4_SB(sb)->s_cluster_bits;
+
 	if (offsetp)
 		*offsetp = offset;
+
 	if (blockgrpp)
 		*blockgrpp = blocknr;
 
@@ -82,6 +87,7 @@ static inline int ext4_block_in_group(struct super_block *sb,
 /* Return the number of clusters used for file system metadata; this
  * represents the overhead needed by the file system.
  */
+/* OyTao: TODO */
 static unsigned ext4_num_overhead_clusters(struct super_block *sb,
 					   ext4_group_t block_group,
 					   struct ext4_group_desc *gdp)
@@ -276,6 +282,12 @@ unsigned ext4_free_clusters_after_init(struct super_block *sb,
  * @bh:			pointer to the buffer head to store the block
  *			group descriptor
  */
+/*
+ * OyTao: 根据group的索引@block_group,在super_info中的s_group_desc数组中找到对应的
+ * group_desc 所在的buffer head(包含有效数据）以及对应的group desc数据。
+ *
+ * block descriptors 都是在ext4_fill_super时候处理的。
+ */
 struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 					     ext4_group_t block_group,
 					     struct buffer_head **bh)
@@ -293,6 +305,11 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 		return NULL;
 	}
 
+	/* 
+	 * OyTao:s_group_desc是在ext4_fill_super中分配 
+	 * @group_desc表示在第几个block(group descriptor有多个blocks)
+	 * @offset: 表示block_group descriptor 在block中第几个
+	 */
 	group_desc = block_group >> EXT4_DESC_PER_BLOCK_BITS(sb);
 	offset = block_group & (EXT4_DESC_PER_BLOCK(sb) - 1);
 	if (!sbi->s_group_desc[group_desc]) {
@@ -302,11 +319,18 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 		return NULL;
 	}
 
+	/*
+	 * OyTao: EXT4_DESC_SIZE(sb): group descript 大小。
+	 * 获取到对应的desc
+	 */
 	desc = (struct ext4_group_desc *)(
 		(__u8 *)sbi->s_group_desc[group_desc]->b_data +
 		offset * EXT4_DESC_SIZE(sb));
+
+	/* OyTao: @*bh,是block group desc所在的block的buffer head */
 	if (bh)
 		*bh = sbi->s_group_desc[group_desc];
+
 	return desc;
 }
 
@@ -534,10 +558,24 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
  * Check if filesystem has nclusters free & available for allocation.
  * On success return 1, return 0 on failure.
  */
+/*
+ * OyTao: 
+ * 有几种情况： 
+ * 1. free > dirty + need + s_resverd(sb_info) + resvered(super_block)
+ * 2. free > dirty + need + s_resverd(sb_info) (需要一些条件)
+ * 3. free > dirty + need
+ *	
+ *	如果per_cpu_free - per_cpu_dirty - (s_reverd + reverd) < EXT4_FREECLUSTERS_WATERMARK
+ *	则free = all_cpu_free, dirty = all_cpu_dirty
+ *	
+ *	TODO
+ */
 static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 				  s64 nclusters, unsigned int flags)
 {
+	/* OyTao: free, dirty, reserved ??? TODO */
 	s64 free_clusters, dirty_clusters, rsv, resv_clusters;
+
 	struct percpu_counter *fcc = &sbi->s_freeclusters_counter;
 	struct percpu_counter *dcc = &sbi->s_dirtyclusters_counter;
 
@@ -557,6 +595,7 @@ static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 		free_clusters  = percpu_counter_sum_positive(fcc);
 		dirty_clusters = percpu_counter_sum_positive(dcc);
 	}
+
 	/* Check whether we have space after accounting for current
 	 * dirty clusters & root reserved clusters.
 	 */
@@ -564,6 +603,7 @@ static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 		return 1;
 
 	/* Hm, nope.  Are (enough) root reserved clusters available? */
+	/* OyTao: TODO */
 	if (uid_eq(sbi->s_resuid, current_fsuid()) ||
 	    (!gid_eq(sbi->s_resgid, GLOBAL_ROOT_GID) && in_group_p(sbi->s_resgid)) ||
 	    capable(CAP_SYS_RESOURCE) ||
@@ -573,6 +613,7 @@ static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 				      resv_clusters))
 			return 1;
 	}
+
 	/* No free blocks. Let's see if we can dip into reserved pool */
 	if (flags & EXT4_MB_USE_RESERVED) {
 		if (free_clusters >= (nclusters + dirty_clusters))
@@ -582,6 +623,10 @@ static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 	return 0;
 }
 
+/*
+ * OyTao: 尝试分配@nclusters.
+ * 如果有足够的cluster,则分配，将@nclusters 加入per_cpu dirty clusters计数中。
+ */
 int ext4_claim_free_clusters(struct ext4_sb_info *sbi,
 			     s64 nclusters, unsigned int flags)
 {

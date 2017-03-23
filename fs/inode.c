@@ -909,6 +909,9 @@ struct inode *new_inode_pseudo(struct super_block *sb)
  *	newly created inode's mapping
  *
  */
+/* 
+ * OyTao:分配一个新的inode结构。
+ */
 struct inode *new_inode(struct super_block *sb)
 {
 	struct inode *inode;
