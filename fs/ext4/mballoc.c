@@ -3344,6 +3344,16 @@ static void ext4_discard_allocated_blocks(struct ext4_allocation_context *ac)
 /*
  * use blocks preallocated to inode
  */
+/* 
+ * OyTao: 从per-inode prealloc空间中分配，同时把分配的信息（physical block idx,
+ * group idx, cluster idx,以及分配的cluster nubmers 都记录在
+ * ext4_allocation_context中的ac_b_ex (best free extent中）
+ *
+ * 同时设置ac_pa为当前的prealloc_space, statue = AC_STATUS_FOUND,
+ * 分配之后，更新pa_free -= len (in cluster unit);
+ *
+ * 从per-inode prealloc spance中分配block，需要加锁(pa_lock)
+ */
 static void ext4_mb_use_inode_pa(struct ext4_allocation_context *ac,
 				struct ext4_prealloc_space *pa)
 {
@@ -3353,12 +3363,18 @@ static void ext4_mb_use_inode_pa(struct ext4_allocation_context *ac,
 	int len;
 
 	/* found preallocated blocks, use them */
+	/* OyTao: @start: per-inode prealloc 物理block idx;
+	 *		  @end: 要分配的物理block idx,与prealloc 最大的物理block idx的最小值。
+	 *        @len: 真实分配的cluster numbers.
+	 */
 	start = pa->pa_pstart + (ac->ac_o_ex.fe_logical - pa->pa_lstart);
 	end = min(pa->pa_pstart + EXT4_C2B(sbi, pa->pa_len),
 		  start + EXT4_C2B(sbi, ac->ac_o_ex.fe_len));
+
 	len = EXT4_NUM_B2C(sbi, end - start);
 	ext4_get_group_no_and_offset(ac->ac_sb, start, &ac->ac_b_ex.fe_group,
 					&ac->ac_b_ex.fe_start);
+
 	ac->ac_b_ex.fe_len = len;
 	ac->ac_status = AC_STATUS_FOUND;
 	ac->ac_pa = pa;
@@ -3373,6 +3389,9 @@ static void ext4_mb_use_inode_pa(struct ext4_allocation_context *ac,
 
 /*
  * use blocks preallocated to locality group
+ */
+/*
+ * OyTao: 从per-cpu group prealloc中分配.
  */
 static void ext4_mb_use_group_pa(struct ext4_allocation_context *ac,
 				struct ext4_prealloc_space *pa)
@@ -3401,6 +3420,8 @@ static void ext4_mb_use_group_pa(struct ext4_allocation_context *ac,
  * space that is having currently known minimal distance
  * from the goal block.
  */
+/*
+ * OyTao:在@cpa 与@pa prealloc space之间找到与想分配的@goal_block最接近的 */
 static struct ext4_prealloc_space *
 ext4_mb_check_group_pa(ext4_fsblk_t goal_block,
 			struct ext4_prealloc_space *pa,
@@ -3447,11 +3468,13 @@ ext4_mb_use_preallocated(struct ext4_allocation_context *ac)
 
 		/* all fields in this condition don't change,
 		 * so we can skip locking for them */
+		/* OyTao: 检查要分配的logical block 是否在prealloc_space范围内 */
 		if (ac->ac_o_ex.fe_logical < pa->pa_lstart ||
 		    ac->ac_o_ex.fe_logical >= (pa->pa_lstart +
 					       EXT4_C2B(sbi, pa->pa_len)))
 			continue;
 
+		/* OyTao: 检查最大的范围 (inode 模式，不可能超过2^32) */
 		/* non-extent files can't have physical blocks past 2^32 */
 		if (!(ext4_test_inode_flag(ac->ac_inode, EXT4_INODE_EXTENTS)) &&
 		    (pa->pa_pstart + EXT4_C2B(sbi, pa->pa_len) >
@@ -3460,10 +3483,17 @@ ext4_mb_use_preallocated(struct ext4_allocation_context *ac)
 
 		/* found preallocated blocks, use them */
 		spin_lock(&pa->pa_lock);
+		/* OyTao: TODO */
 		if (pa->pa_deleted == 0 && pa->pa_free) {
+			/* OyTao: TODO */
 			atomic_inc(&pa->pa_count);
+
+			/* OyTao: 从当前的per-inode @pa中分配blocks */
 			ext4_mb_use_inode_pa(ac, pa);
+
 			spin_unlock(&pa->pa_lock);
+
+			/* OyTao: TODO */
 			ac->ac_criteria = 10;
 			rcu_read_unlock();
 			return 1;
@@ -3473,31 +3503,42 @@ ext4_mb_use_preallocated(struct ext4_allocation_context *ac)
 	rcu_read_unlock();
 
 	/* can we use group allocation? */
+	/* OyTao:判断是否需要采用per-cpu preallocation, 在ext4_mb_group_or_file中判断 */
 	if (!(ac->ac_flags & EXT4_MB_HINT_GROUP_ALLOC))
 		return 0;
 
 	/* inode may have no locality group for some reason */
+	/* @lg per cpu prealloc */
 	lg = ac->ac_lg;
 	if (lg == NULL)
 		return 0;
+
+	/* OyTao: TODO */
 	order  = fls(ac->ac_o_ex.fe_len) - 1;
 	if (order > PREALLOC_TB_SIZE - 1)
 		/* The max size of hash table is PREALLOC_TB_SIZE */
 		order = PREALLOC_TB_SIZE - 1;
 
+	/* OyTao: @ac_g_ex 在ext4_mb_initialize_context中与@ac_o_ex一致 */
 	goal_block = ext4_grp_offs_to_block(ac->ac_sb, &ac->ac_g_ex);
+
 	/*
 	 * search for the prealloc space that is having
 	 * minimal distance from the goal block.
 	 */
 	for (i = order; i < PREALLOC_TB_SIZE; i++) {
 		rcu_read_lock();
+		/*
+		 * OyTao: 对per cpu 当前的order的prealloc space查找free > fe_len的pa
+		 * 遍寻所有的order,寻找可以分配的pa同时与goal block最接近的block@cpa
+		 */
 		list_for_each_entry_rcu(pa, &lg->lg_prealloc_list[i],
 					pa_inode_list) {
 			spin_lock(&pa->pa_lock);
 			if (pa->pa_deleted == 0 &&
 					pa->pa_free >= ac->ac_o_ex.fe_len) {
 
+				/* OyTao: 比较pa之间，哪个与goal block最接近 */
 				cpa = ext4_mb_check_group_pa(goal_block,
 								pa, cpa);
 			}
@@ -4191,6 +4232,10 @@ static inline void ext4_mb_show_ac(struct ext4_allocation_context *ac)
  *
  * One can tune this size via /sys/fs/ext4/<partition>/mb_stream_req
  */
+/*
+ * OyTao: 确认是否可以用per-cpu group prealloc 方式 
+ * 对于小于 < mb_stream_req，小文件采用per cpu prealloc.
+ */
 static void ext4_mb_group_or_file(struct ext4_allocation_context *ac)
 {
 	struct ext4_sb_info *sbi = EXT4_SB(ac->ac_sb);
@@ -4207,6 +4252,11 @@ static void ext4_mb_group_or_file(struct ext4_allocation_context *ac)
 	isize = (i_size_read(ac->ac_inode) + ac->ac_sb->s_blocksize - 1)
 		>> bsbits;
 
+	/*
+	 * OyTao: 如果当前写操作是文件最后的logical block, 并且文件系统不忙，
+	 * 而且文件已经关闭，这时候不采取prealloc方式了。
+	 * 设置NO_PREALLOC.
+	 */
 	if ((size == isize) &&
 	    !ext4_fs_is_busy(sbi) &&
 	    (atomic_read(&ac->ac_inode->i_writecount) == 0)) {
@@ -4214,12 +4264,14 @@ static void ext4_mb_group_or_file(struct ext4_allocation_context *ac)
 		return;
 	}
 
+	/* OyTao: 如果mb_group_prealloc < =0,则无法采用per-cpu prealloc了 */
 	if (sbi->s_mb_group_prealloc <= 0) {
 		ac->ac_flags |= EXT4_MB_STREAM_ALLOC;
 		return;
 	}
 
 	/* don't use group allocation for large files */
+	/* OyTao: 对于大文件，不采用per-cpu prealloc方式 */
 	size = max(size, isize);
 	if (size > sbi->s_mb_stream_request) {
 		ac->ac_flags |= EXT4_MB_STREAM_ALLOC;
@@ -4232,9 +4284,11 @@ static void ext4_mb_group_or_file(struct ext4_allocation_context *ac)
 	 * per cpu locality group is to reduce the contention between block
 	 * request from multiple CPUs.
 	 */
+	/* OyTao:获取当前cpu对应的prealloc */
 	ac->ac_lg = raw_cpu_ptr(sbi->s_locality_groups);
 
 	/* we're going to use group allocation */
+	/* OyTao: 可以采用per cpu group prealloc */
 	ac->ac_flags |= EXT4_MB_HINT_GROUP_ALLOC;
 
 	/* serialize all allocations in the group */
@@ -4294,7 +4348,9 @@ ext4_mb_initialize_context(struct ext4_allocation_context *ac,
 
 	/* we have to define context: we'll we work with a file or
 	 * locality group. this is a policy, actually */
-	/* OyTao: TODO */
+	/* OyTao: 确定是否可以采用per cpu prealloc, 
+	 * 正常prealloc都会先经过pre-inode prealloc方式。
+	 */
 	ext4_mb_group_or_file(ac);
 
 	mb_debug(1, "init ac: %u blocks @ %u, goal %u, flags %x, 2^%d, "
@@ -4591,6 +4647,7 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 	if (!ext4_mb_use_preallocated(ac)) {
 		ac->ac_op = EXT4_MB_HISTORY_ALLOC;
 		ext4_mb_normalize_request(ac, ar);
+
 repeat:
 		/* allocate space in core */
 		*errp = ext4_mb_regular_allocator(ac);

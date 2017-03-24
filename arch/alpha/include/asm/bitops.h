@@ -390,6 +390,7 @@ static inline unsigned long __fls(unsigned long x)
 	return fls64(x) - 1;
 }
 
+/* OyTao: 查找第一个1的位置 */
 static inline int fls(int x)
 {
 	return fls64((unsigned int) x);

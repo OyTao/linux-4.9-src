@@ -98,7 +98,9 @@ struct ext4_free_data {
 };
 
 struct ext4_prealloc_space {
+	/* OyTao: @pa_inode_list per file list in @ext4_inode_info */
 	struct list_head	pa_inode_list;
+
 	struct list_head	pa_group_list;
 
 	union {
@@ -117,11 +119,16 @@ struct ext4_prealloc_space {
 	/* OyTao: logical block start based on file */
 	ext4_lblk_t		pa_lstart;	/* log. block */
 
+	/* OyTao: in cluster unit */
 	ext4_grpblk_t		pa_len;		/* len of preallocated chunk */
+
+	/* OyTao: in cluster unit */
 	ext4_grpblk_t		pa_free;	/* how many blocks are free */
 
+	/* OyTao: per-inode prealloc space or per-cpu group locaility prealloc space */
 	unsigned short		pa_type;	/* pa type. inode or group */
 
+	/* OyTao:　TODO */
 	spinlock_t		*pa_obj_lock;
 
 	struct inode		*pa_inode;	/* hack, for history only */

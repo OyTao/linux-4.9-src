@@ -4657,7 +4657,7 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	ar.goal -= offset;
 	ar.logical -= offset;
 
-	/* OyTao: TODO */
+	/* OyTao: 如果是常规的文件 */
 	if (S_ISREG(inode->i_mode))
 		ar.flags = EXT4_MB_HINT_DATA;
 	else
