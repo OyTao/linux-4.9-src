@@ -181,6 +181,7 @@ static unsigned int num_clusters_in_group(struct super_block *sb,
 }
 
 /* Initializes an uninitialized block bitmap */
+/* OyTao: 初始化group对应的block bitmap */
 static int ext4_init_block_bitmap(struct super_block *sb,
 				   struct buffer_head *bh,
 				   ext4_group_t block_group,
@@ -197,10 +198,13 @@ static int ext4_init_block_bitmap(struct super_block *sb,
 	/* If checksum is bad mark all blocks used to prevent allocation
 	 * essentially implementing a per-group read-only flag. */
 	if (!ext4_group_desc_csum_verify(sb, block_group, gdp)) {
+		/* OyTao: TODO */
 		grp = ext4_get_group_info(sb, block_group);
+
 		if (!EXT4_MB_GRP_BBITMAP_CORRUPT(grp))
 			percpu_counter_sub(&sbi->s_freeclusters_counter,
 					   grp->bb_free);
+
 		set_bit(EXT4_GROUP_INFO_BBITMAP_CORRUPT_BIT, &grp->bb_state);
 		if (!EXT4_MB_GRP_IBITMAP_CORRUPT(grp)) {
 			int count;
@@ -208,24 +212,45 @@ static int ext4_init_block_bitmap(struct super_block *sb,
 			percpu_counter_sub(&sbi->s_freeinodes_counter,
 					   count);
 		}
+
 		set_bit(EXT4_GROUP_INFO_IBITMAP_CORRUPT_BIT, &grp->bb_state);
+
 		return -EFSBADCRC;
 	}
+
+	/* OyTao:首先把对应的bitmap对应的buffer head 清零 */
 	memset(bh->b_data, 0, sb->s_blocksize);
 
+	/* OyTao: @bit_max: (superblock + gdt blocks) in cluster unit */
 	bit_max = ext4_num_base_meta_clusters(sb, block_group);
+
+	/*
+	 * OyTao: 每一个cluster对应一个bit,所以meta clusters对应的bytes是
+	 * bit_max >> 3(每一个byte 8个bits). 如果meta clusters所占的bytes超过了
+	 * buffer head对应的size. 设置EFSCORRUPTED.
+	 */
 	if ((bit_max >> 3) >= bh->b_size)
 		return -EFSCORRUPTED;
 
+	/* OyTao: 所有的meta clusters是紧挨着的。在bitmap中对应的bit设置上 */
 	for (bit = 0; bit < bit_max; bit++)
 		ext4_set_bit(bit, bh->b_data);
 
+	/* OyTao: first data block idx of group @block_group */
 	start = ext4_group_first_block_no(sb, block_group);
 
+	/* OyTao: flex block group feature  TODO */
 	if (ext4_has_feature_flex_bg(sb))
 		flex_bg = 1;
 
 	/* Set bits for block and inode bitmaps, and inode table */
+	/*
+	 * OyTao: 分别对data block bitmap(1 block), 
+	 *        inode bitmap(1 block ), inode tables包含的blocks(多个block)
+	 *		  在group bitmap置上.
+	 * TODO
+	 * 为什么需要tmp - start.(first data block),如果是first block则合理。
+	 */
 	tmp = ext4_block_bitmap(sb, gdp);
 	if (!flex_bg || ext4_block_in_group(sb, tmp, block_group))
 		ext4_set_bit(EXT4_B2C(sbi, tmp - start), bh->b_data);
@@ -361,6 +386,7 @@ static ext4_fsblk_t ext4_valid_block_bitmap(struct super_block *sb,
 	group_first_block = ext4_group_first_block_no(sb, block_group);
 
 	/* check whether block bitmap block number is set */
+	/* OyTao: 检查data block bitmap 所占的block在group bitmap中是否设置 */
 	blk = ext4_block_bitmap(sb, desc);
 	offset = blk - group_first_block;
 	if (!ext4_test_bit(EXT4_B2C(sbi, offset), bh->b_data))
@@ -368,6 +394,7 @@ static ext4_fsblk_t ext4_valid_block_bitmap(struct super_block *sb,
 		return blk;
 
 	/* check whether the inode bitmap block number is set */
+	/* OyTao: 检查inode bitmap block对应的cluster, 在group bitmap中是否设置 */
 	blk = ext4_inode_bitmap(sb, desc);
 	offset = blk - group_first_block;
 	if (!ext4_test_bit(EXT4_B2C(sbi, offset), bh->b_data))
@@ -375,6 +402,7 @@ static ext4_fsblk_t ext4_valid_block_bitmap(struct super_block *sb,
 		return blk;
 
 	/* check whether the inode table block number is set */
+	/* OyTao: 检查inode table所包含的blocks，在group bitmap中是否设置 */
 	blk = ext4_inode_table(sb, desc);
 	offset = blk - group_first_block;
 	next_zero_bit = ext4_find_next_zero_bit(bh->b_data,
@@ -446,10 +474,15 @@ ext4_read_block_bitmap_nowait(struct super_block *sb, ext4_group_t block_group)
 	ext4_fsblk_t bitmap_blk;
 	int err;
 
+	/* OyTao: 得到group对应的group descriptor. 在s_group_desc中 */
 	desc = ext4_get_group_desc(sb, block_group, NULL);
 	if (!desc)
 		return ERR_PTR(-EFSCORRUPTED);
+
+	/* OyTao: 获取对应group的 bitmap 所在的physical block idx */
 	bitmap_blk = ext4_block_bitmap(sb, desc);
+
+	/* OyTao; 获取group bitmap对应的buffer head */
 	bh = sb_getblk(sb, bitmap_blk);
 	if (unlikely(!bh)) {
 		ext4_error(sb, "Cannot get buffer for block bitmap - "
@@ -461,16 +494,23 @@ ext4_read_block_bitmap_nowait(struct super_block *sb, ext4_group_t block_group)
 	if (bitmap_uptodate(bh))
 		goto verify;
 
+	/* OyTao: locked buffer head */
 	lock_buffer(bh);
 	if (bitmap_uptodate(bh)) {
 		unlock_buffer(bh);
 		goto verify;
 	}
+
 	ext4_lock_group(sb, block_group);
+
 	if (desc->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
+
 		err = ext4_init_block_bitmap(sb, bh, block_group, desc);
+
 		set_bitmap_uptodate(bh);
+
 		set_buffer_uptodate(bh);
+
 		ext4_unlock_group(sb, block_group);
 		unlock_buffer(bh);
 		if (err) {
@@ -480,7 +520,9 @@ ext4_read_block_bitmap_nowait(struct super_block *sb, ext4_group_t block_group)
 		}
 		goto verify;
 	}
+
 	ext4_unlock_group(sb, block_group);
+
 	if (buffer_uptodate(bh)) {
 		/*
 		 * if not uninit if bh is uptodate,
@@ -490,6 +532,12 @@ ext4_read_block_bitmap_nowait(struct super_block *sb, ext4_group_t block_group)
 		unlock_buffer(bh);
 		goto verify;
 	}
+
+	/* 
+	 * OyTao:如果buffer head不包含最新的数据，但是group bitmap对应的block已经
+	 * 初始化过。则需要读取对应的physical block. 读完成后，设置buffer head update.
+	 * bitmap update.
+	 */
 	/*
 	 * submit the buffer_head for reading
 	 */
@@ -497,8 +545,10 @@ ext4_read_block_bitmap_nowait(struct super_block *sb, ext4_group_t block_group)
 	trace_ext4_read_block_bitmap_load(sb, block_group);
 	bh->b_end_io = ext4_end_bitmap_read;
 	get_bh(bh);
+
 	submit_bh(REQ_OP_READ, REQ_META | REQ_PRIO, bh);
 	return bh;
+
 verify:
 	err = ext4_validate_block_bitmap(sb, desc, block_group, bh);
 	if (err)
@@ -798,18 +848,31 @@ int ext4_bg_has_super(struct super_block *sb, ext4_group_t group)
 {
 	struct ext4_super_block *es = EXT4_SB(sb)->s_es;
 
+	/* OyTao: group 0拥有super block */
 	if (group == 0)
 		return 1;
+
+	/* OyTao: sparse super2 feature TODO */
 	if (ext4_has_feature_sparse_super2(sb)) {
 		if (group == le32_to_cpu(es->s_backup_bgs[0]) ||
 		    group == le32_to_cpu(es->s_backup_bgs[1]))
 			return 1;
 		return 0;
 	}
+
+	/* OyTao: TODO */
 	if ((group <= 1) || !ext4_has_feature_sparse_super(sb))
 		return 1;
+
 	if (!(group & 1))
 		return 0;
+
+	/* 
+	 * OyTao:如果是3, 3 * 3, 3 * 3 .. 3,
+	 *			   5, 5 * 5, 5 * 5 .. 5,
+	 *			   7, 7 * 7, 7 * 7 .. 7
+	 * 都包含super block 
+	 */
 	if (test_root(group, 3) || (test_root(group, 5)) ||
 	    test_root(group, 7))
 		return 1;
@@ -867,6 +930,15 @@ unsigned long ext4_bg_num_gdb(struct super_block *sb, ext4_group_t group)
  * This function returns the number of file system metadata clusters at
  * the beginning of a block group, including the reserved gdt blocks.
  */
+
+/*
+ * OyTao: meta block group feature TODO
+ */
+/* 
+ * OyTao:确定在@block_group中，包含的super block 以及group descriptors Table
+ * 所占的blocks number.
+ * 返回的是cluster numbers.(block numbers --> cluster numbers) 
+ */
 static unsigned ext4_num_base_meta_clusters(struct super_block *sb,
 				     ext4_group_t block_group)
 {
@@ -874,18 +946,25 @@ static unsigned ext4_num_base_meta_clusters(struct super_block *sb,
 	unsigned num;
 
 	/* Check for superblock and gdt backups in this group */
+	/* OyTao: 确定是否包含super block */
 	num = ext4_bg_has_super(sb, block_group);
 
+	/* OyTao: 计算在该group中包含的gdt所占的blocks */
 	if (!ext4_has_feature_meta_bg(sb) ||
 	    block_group < le32_to_cpu(sbi->s_es->s_first_meta_bg) *
 			  sbi->s_desc_per_block) {
+
 		if (num) {
 			num += ext4_bg_num_gdb(sb, block_group);
 			num += le16_to_cpu(sbi->s_es->s_reserved_gdt_blocks);
 		}
+
 	} else { /* For META_BG_BLOCK_GROUPS */
+		/* OyTao: meta block group feature TODO */
 		num += ext4_bg_num_gdb(sb, block_group);
 	}
+
+	/* OyTao: block --> chunk */
 	return EXT4_NUM_B2C(sbi, num);
 }
 /**

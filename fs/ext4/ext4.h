@@ -2209,6 +2209,7 @@ struct dir_private_info {
 };
 
 /* calculate the first block number of the group */
+/* OyTao: 计算以@group_no为idx的group的first data block idx */
 static inline ext4_fsblk_t
 ext4_group_first_block_no(struct super_block *sb, ext4_group_t group_no)
 {
@@ -2898,6 +2899,7 @@ static inline void ext4_isize_set(struct ext4_inode *raw_inode, loff_t i_size)
 	raw_inode->i_size_high = cpu_to_le32(i_size >> 32);
 }
 
+/* OyTao:根据group idx在s_group_info中查找对应的group_info */
 static inline
 struct ext4_group_info *ext4_get_group_info(struct super_block *sb,
 					    ext4_group_t group)
@@ -3012,14 +3014,20 @@ struct ext4_group_info {
 };
 
 #define EXT4_GROUP_INFO_NEED_INIT_BIT		0
+
 #define EXT4_GROUP_INFO_WAS_TRIMMED_BIT		1
+
+/* OyTao: TODO  */
 #define EXT4_GROUP_INFO_BBITMAP_CORRUPT_BIT	2
+
 #define EXT4_GROUP_INFO_IBITMAP_CORRUPT_BIT	3
 
 #define EXT4_MB_GRP_NEED_INIT(grp)	\
 	(test_bit(EXT4_GROUP_INFO_NEED_INIT_BIT, &((grp)->bb_state)))
+
 #define EXT4_MB_GRP_BBITMAP_CORRUPT(grp)	\
 	(test_bit(EXT4_GROUP_INFO_BBITMAP_CORRUPT_BIT, &((grp)->bb_state)))
+
 #define EXT4_MB_GRP_IBITMAP_CORRUPT(grp)	\
 	(test_bit(EXT4_GROUP_INFO_IBITMAP_CORRUPT_BIT, &((grp)->bb_state)))
 

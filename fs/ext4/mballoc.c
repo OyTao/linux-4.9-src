@@ -841,6 +841,7 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 	inode = page->mapping->host;
 	sb = inode->i_sb;
 	ngroups = ext4_get_groups_count(sb);
+
 	blocksize = 1 << inode->i_blkbits;
 	blocks_per_page = PAGE_SIZE / blocksize;
 
@@ -862,10 +863,12 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 	first_group = page->index * blocks_per_page / 2;
 
 	/* read all groups the page covers into the cache */
+	/* OyTao: bh[index]表示在page中的第index个的bitmap对应的block */
 	for (i = 0, group = first_group; i < groups_per_page; i++, group++) {
 		if (group >= ngroups)
 			break;
 
+		/* OyTao:得到group对应的group_info */
 		grinfo = ext4_get_group_info(sb, group);
 		/*
 		 * If page is uptodate then we came here after online resize
@@ -877,6 +880,7 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 			bh[i] = NULL;
 			continue;
 		}
+
 		bh[i] = ext4_read_block_bitmap_nowait(sb, group);
 		if (IS_ERR(bh[i])) {
 			err = PTR_ERR(bh[i]);
@@ -1002,6 +1006,12 @@ static int ext4_mb_get_buddy_page_lock(struct super_block *sb,
 	 * and buddy information in consecutive blocks.
 	 * So for each group we need two blocks.
 	 */
+	/*
+	 * OyTao: 在buddy cache对应的inode中，查找group对应的page. 没有，则创建。
+	 * 同时locked the page.
+	 * 因为一个group会有bitmap(1个block)以及buddy info(1个block)
+	 * 所以block = group * 2.
+	 */
 	block = group * 2;
 	pnum = block / blocks_per_page;
 	poff = block % blocks_per_page;
@@ -1009,6 +1019,8 @@ static int ext4_mb_get_buddy_page_lock(struct super_block *sb,
 	if (!page)
 		return -ENOMEM;
 	BUG_ON(page->mapping != inode->i_mapping);
+
+	/* OyTao: 初始化bitmap对应的page以及对应的地址 */
 	e4b->bd_bitmap_page = page;
 	e4b->bd_bitmap = page_address(page) + (poff * sb->s_blocksize);
 
@@ -1017,6 +1029,10 @@ static int ext4_mb_get_buddy_page_lock(struct super_block *sb,
 		return 0;
 	}
 
+	/*
+	 * OyTao: 如果bitmap与buddy info,每一个block占用一个page. 则为
+	 * buddy info重新分配page
+	 */
 	block++;
 	pnum = block / blocks_per_page;
 	page = find_or_create_page(inode->i_mapping, pnum, gfp);
@@ -1065,6 +1081,7 @@ int ext4_mb_init_group(struct super_block *sb, ext4_group_t group, gfp_t gfp)
 	 * The call to ext4_mb_get_buddy_page_lock will mark the
 	 * page accessed.
 	 */
+	/* OyTao: 获取group bitmap以及group buddy所在的page, 同时Locked */
 	ret = ext4_mb_get_buddy_page_lock(sb, group, &e4b, gfp);
 	if (ret || !EXT4_MB_GRP_NEED_INIT(this_grp)) {
 		/*
@@ -1111,6 +1128,24 @@ err:
  * block group lock of all groups for this page; do not hold the BG lock when
  * calling this routine!
  */
+/* 
+ * OyTao:
+ * The buddy information is attached to buddy cache inode so that
+ * we can access them through the page cache. 
+ * The information involve block bitmap and buddy information. 
+ * The information are stored in the inode as:
+ *
+ *  {                        page                        }
+ *  [ group 0 bitmap][ group 0 buddy] [group 1][ group 1]...
+ *
+ *
+ * one block each for bitmap and buddy information.  So for each group we
+ * take up 2 blocks. 
+ *
+ * 在buddy_cache中，一个group会有group bitmap以及group buddy信息。两者分别占有
+ * 一个block.
+ * 可以通过group_idx * 2作为idx查找。
+ */
 static noinline_for_stack int
 ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 		       struct ext4_buddy *e4b, gfp_t gfp)
@@ -1131,6 +1166,7 @@ ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 	blocks_per_page = PAGE_SIZE / sb->s_blocksize;
 	grp = ext4_get_group_info(sb, group);
 
+	/* OyTao: 初始化对应的ext4_buddy */
 	e4b->bd_blkbits = sb->s_blocksize_bits;
 	e4b->bd_info = grp;
 	e4b->bd_sb = sb;
@@ -1836,6 +1872,7 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 
 	if (!(ac->ac_flags & EXT4_MB_HINT_TRY_GOAL))
 		return 0;
+
 	if (grp->bb_free == 0)
 		return 0;
 
@@ -2115,6 +2152,7 @@ ext4_mb_regular_allocator(struct ext4_allocation_context *ac)
 	sbi = EXT4_SB(sb);
 	ngroups = ext4_get_groups_count(sb);
 	/* non-extent files are limited to low blocks/groups */
+	/* OyTao:如果是extent files 则从super_info中获取 */
 	if (!(ext4_test_inode_flag(ac->ac_inode, EXT4_INODE_EXTENTS)))
 		ngroups = sbi->s_blockfile_groups;
 
@@ -3079,6 +3117,7 @@ out_err:
  *
  * XXX: should we try to preallocate more than the group has now?
  */
+/* OyTao:如果是per-cpu group preallocation, 设置的fe_len为s_mb_group_prealloc */
 static void ext4_mb_normalize_group_request(struct ext4_allocation_context *ac)
 {
 	struct super_block *sb = ac->ac_sb;
@@ -3107,6 +3146,10 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 	struct ext4_inode_info *ei = EXT4_I(ac->ac_inode);
 	struct ext4_prealloc_space *pa;
 
+	/* 
+	 * OyTao: 如果不是HINT_DATA,或者是设置了HINT_GOAL_ONLY, HINT_NOPREALLOC
+	 * 都需要通过这个预估大小。
+	 */
 	/* do normalize only data requests, metadata requests
 	   do not need preallocation */
 	if (!(ac->ac_flags & EXT4_MB_HINT_DATA))
@@ -3121,6 +3164,10 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 	if (ac->ac_flags & EXT4_MB_HINT_NOPREALLOC)
 		return;
 
+	/*
+	 * OyTao: 如果是在per-cpu group preallocation中分配，设置fe_len
+	 * 为s_mb_group_prealloc 
+	 */
 	if (ac->ac_flags & EXT4_MB_HINT_GROUP_ALLOC) {
 		ext4_mb_normalize_group_request(ac);
 		return ;
@@ -3137,6 +3184,7 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 	orig_size = size;
 
 	/* max size of free chunks */
+	/* OyTao: TODO */
 	max = 2 << bsbits;
 
 #define NRL_CHECK_SIZE(req, size, max, chunk_size)	\
@@ -3144,6 +3192,35 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 
 	/* first, try to predict filesize */
 	/* XXX: should this table be tunable? */
+	/* 
+	 * OyTao: 预设size;同时修正start_off.
+	 *
+	 * @start_off, size都是字节为单位
+	 * case 1: 
+	 * 16k --> 32k --> 64k --> 128k --> 256k --> 512k 
+	 *
+	 * case 2:
+	 * size < 4M 
+	 * @start_off = fe_logical按照2M切分所属部分的start.(0或者2M)
+	 * size = 2M
+	 *
+	 * case 3:
+	 * size < 8M 
+	 * @start_off = fe_logical按照4M切分所属区域的start.(0或者4M)
+	 * size = 4M
+	 *
+	 * case 4:
+	 * fe_len(cluster unit) <  (8M bytes >> bsbits)
+	 * 即 fe_len (block unit) < blocks_per_cluster * (8M >> bsbits)
+	 * size = 8M
+	 * start_off = fe_logical按照8M切分所属的局域的start(0, 8M, 16M)
+	 *
+	 * case 5:
+	 * start_off = fe_logical 字节数
+	 * size =  fe_len 字节数
+	 *
+	 */
+
 	start_off = 0;
 	if (size <= 16 * 1024) {
 		size = 16 * 1024;
@@ -3177,10 +3254,17 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 		size	  = (loff_t) EXT4_C2B(EXT4_SB(ac->ac_sb),
 					      ac->ac_o_ex.fe_len) << bsbits;
 	}
+
+	/* OyTao: @size, @start装变为block units */
 	size = size >> bsbits;
 	start = start_off >> bsbits;
 
 	/* don't cover already allocated blocks in selected range */
+	/* 
+	 * OyTao: 如果当前的准备分配的(start, start + size) 与lleft或者lright有
+	 * overlap, 则需要修正(start, start + size)局域，减去该区域与lleft或者lright
+	 * 的重叠部分。
+	 */
 	if (ar->pleft && start <= ar->lleft) {
 		size -= ar->lleft + 1 - start;
 		start = ar->lleft + 1;
@@ -3191,6 +3275,15 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 	end = start + size;
 
 	/* check we don't cross already preallocated blocks */
+	/*
+	 * OyTao: 检查所有的pre-inode preallocation space,所有的pa都不会包含fe_logical;
+	 * 而且不可能完全包含(start , end)局域。
+	 * 
+	 * 如果(start, end)与PA有overlap，则修正该区域，减去overlap部分。
+	 *  case 1) fe_logical > pa_end, 则start = pa_end;
+	 *  case 2) fe_logical < pa_start, 则end = pa_start;
+	 *
+	 */
 	rcu_read_lock();
 	list_for_each_entry_rcu(pa, &ei->i_prealloc_list, pa_inode_list) {
 		ext4_lblk_t pa_end;
@@ -3211,10 +3304,13 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 			ac->ac_o_ex.fe_logical < pa->pa_lstart));
 
 		/* skip PAs this normalized request doesn't overlap with */
+		/* @pa与(start, end)没有overlap */
 		if (pa->pa_lstart >= end || pa_end <= start) {
 			spin_unlock(&pa->pa_lock);
 			continue;
 		}
+		
+		/* OyTao: PAs不可能完全包含(stat, end)局域 */
 		BUG_ON(pa->pa_lstart <= start && pa_end >= end);
 
 		/* adjust start or end to be adjacent to this pa */
@@ -3228,9 +3324,11 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 		spin_unlock(&pa->pa_lock);
 	}
 	rcu_read_unlock();
+	/* OyTao:按照再次修正的start,end，重新计算size */
 	size = end - start;
 
 	/* XXX: extra loop to check we really don't overlap preallocations */
+	/* OyTao:经过修正后，(start , end)不会再与PAs有overlap */
 	rcu_read_lock();
 	list_for_each_entry_rcu(pa, &ei->i_prealloc_list, pa_inode_list) {
 		ext4_lblk_t pa_end;
@@ -3245,6 +3343,7 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 	}
 	rcu_read_unlock();
 
+	/* OyTao: (start, end)区域肯定会包含fe_logical */
 	if (start + size <= ac->ac_o_ex.fe_logical &&
 			start > ac->ac_o_ex.fe_logical) {
 		ext4_msg(ac->ac_sb, KERN_ERR,
@@ -3259,10 +3358,17 @@ ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 
 	/* XXX: is it better to align blocks WRT to logical
 	 * placement or satisfy big request as is */
+
+	/* OyTao: 将已经修正过的@start, @size赋值到ac_g_ex中。作为goal */
 	ac->ac_g_ex.fe_logical = start;
 	ac->ac_g_ex.fe_len = EXT4_NUM_B2C(sbi, size);
 
 	/* define goal start in order to merge */
+	/* OyTao; 尝试与已经分配的pright或者pleft进行merge，如果logical block可以连续
+	 * 则尝试分配连续的physical blocks.
+	 * 则将目标的@fe_group, @fe_start设置到ac_f_ex中，同时设置
+	 * HINT_TRY_GOAL flag.
+	 */
 	if (ar->pright && (ar->lright == (start + size))) {
 		/* merge to the right */
 		ext4_get_group_no_and_offset(ac->ac_sb, ar->pright - size,
@@ -4659,6 +4765,7 @@ repeat:
 		 * space in a special descriptor */
 		if (ac->ac_status == AC_STATUS_FOUND &&
 		    ac->ac_o_ex.fe_len < ac->ac_b_ex.fe_len)
+
 			*errp = ext4_mb_new_preallocation(ac);
 		if (*errp) {
 		discard_and_exit:
@@ -4673,6 +4780,7 @@ repeat:
 			ext4_discard_allocated_blocks(ac);
 			goto errout;
 		} else {
+
 			block = ext4_grp_offs_to_block(sb, &ac->ac_b_ex);
 			ar->len = ac->ac_b_ex.fe_len;
 		}

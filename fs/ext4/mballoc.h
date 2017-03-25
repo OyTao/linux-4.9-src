@@ -217,8 +217,10 @@ struct ext4_allocation_context {
 struct ext4_buddy {
 	struct page *bd_buddy_page;
 	void *bd_buddy;
+
 	struct page *bd_bitmap_page;
 	void *bd_bitmap;
+
 	struct ext4_group_info *bd_info;
 	struct super_block *bd_sb;
 	__u16 bd_blkbits;

@@ -198,6 +198,9 @@ void *ext4_kvzalloc(size_t size, gfp_t flags)
 	return ret;
 }
 
+/*
+ * OyTao: 从block group descriptors 中获取对应的bitmap block 
+ */
 ext4_fsblk_t ext4_block_bitmap(struct super_block *sb,
 			       struct ext4_group_desc *bg)
 {
@@ -206,6 +209,7 @@ ext4_fsblk_t ext4_block_bitmap(struct super_block *sb,
 		 (ext4_fsblk_t)le32_to_cpu(bg->bg_block_bitmap_hi) << 32 : 0);
 }
 
+/* OyTao: 从block group descriptor中获取对应的inode bitmap block idx */
 ext4_fsblk_t ext4_inode_bitmap(struct super_block *sb,
 			       struct ext4_group_desc *bg)
 {
@@ -214,6 +218,7 @@ ext4_fsblk_t ext4_inode_bitmap(struct super_block *sb,
 		 (ext4_fsblk_t)le32_to_cpu(bg->bg_inode_bitmap_hi) << 32 : 0);
 }
 
+/* OyTao: 从block group descriptor中获取对应的inode table block idx */
 ext4_fsblk_t ext4_inode_table(struct super_block *sb,
 			      struct ext4_group_desc *bg)
 {
@@ -2156,6 +2161,9 @@ failed:
 	return 0;
 }
 
+/*
+ * OyTao: TODO 
+ */
 static __le16 ext4_group_desc_csum(struct super_block *sb, __u32 block_group,
 				   struct ext4_group_desc *gdp)
 {
