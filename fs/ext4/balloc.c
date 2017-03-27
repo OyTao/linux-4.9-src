@@ -415,6 +415,10 @@ static ext4_fsblk_t ext4_valid_block_bitmap(struct super_block *sb,
 	return 0;
 }
 
+/* 
+ * OyTao: 检查block group对应的bitmap的csum, 同时valid meta data 是否已经在bitmap
+ * 上已经设置,如果验证通过，设置buffer head verified flag.
+ */
 static int ext4_validate_block_bitmap(struct super_block *sb,
 				      struct ext4_group_desc *desc,
 				      ext4_group_t block_group,
@@ -440,6 +444,7 @@ static int ext4_validate_block_bitmap(struct super_block *sb,
 		set_bit(EXT4_GROUP_INFO_BBITMAP_CORRUPT_BIT, &grp->bb_state);
 		return -EFSBADCRC;
 	}
+
 	blk = ext4_valid_block_bitmap(sb, desc, block_group, bh);
 	if (unlikely(blk != 0)) {
 		ext4_unlock_group(sb, block_group);
@@ -451,7 +456,10 @@ static int ext4_validate_block_bitmap(struct super_block *sb,
 		set_bit(EXT4_GROUP_INFO_BBITMAP_CORRUPT_BIT, &grp->bb_state);
 		return -EFSCORRUPTED;
 	}
+
+	/* OyTao: 设置buffer header 已经verified */
 	set_buffer_verified(bh);
+
 	ext4_unlock_group(sb, block_group);
 	return 0;
 }
@@ -465,6 +473,22 @@ static int ext4_validate_block_bitmap(struct super_block *sb,
  * bits for block/inode/inode tables are set in the bitmaps
  *
  * Return buffer_head on success or NULL in case of failure.
+ */
+
+/* 
+ * 获取对应group bitmap对应的buffer head.
+ * 如果group_desc中没有设置INIT的标记，则需要初始化对应的bitmap.(metadata clusters
+ * 需要在对应的bitmap设置上，同时设置csum。
+ * 
+ * 如果获取的buffer head没有包含最新数据，则需要读磁盘。
+ * 读完成之后，需要validate buffer head.如果通过，需要设置validted flag.
+ *
+ * buffer head拥有了bitmap最新的数据，则设置了bitmap_uptodate以及buffer_uptodate
+ * flags.
+ *
+ * 在操作对应的buffer head 已经group时候，
+ * -- lock buffer head
+ *    -- lock group 
  */
 struct buffer_head *
 ext4_read_block_bitmap_nowait(struct super_block *sb, ext4_group_t block_group)
@@ -494,19 +518,34 @@ ext4_read_block_bitmap_nowait(struct super_block *sb, ext4_group_t block_group)
 	if (bitmap_uptodate(bh))
 		goto verify;
 
-	/* OyTao: locked buffer head */
+	/*
+	 * OyTao: locked buffer head, 如果下发了request, 则回在回调函数中
+	 * unlock buffer. 
+	 * wait_on_buffer 函数会一直阻塞等待buffer unlock
+	 */
 	lock_buffer(bh);
+
 	if (bitmap_uptodate(bh)) {
 		unlock_buffer(bh);
 		goto verify;
 	}
 
+	/* OyTao: 在操作group bitmap对应的bufferhead, 需要
+	 * -- lock buffer head
+	 *     -- lock block_group
+	 */
 	ext4_lock_group(sb, block_group);
 
 	if (desc->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
-
+		/* OyTao: 如果是uninit状态，则需要初始化。首先清零。
+		 * 然后把对应的meta blocks (cluster unit)对应的bitmap设置上。
+		 * 同时设置csum.
+		 */
 		err = ext4_init_block_bitmap(sb, bh, block_group, desc);
 
+		/* OyTao: 如果buffer head包含最新的bitmap.设置bitmap_uptodate,
+		 * buffer_uptodate flags.
+		 */
 		set_bitmap_uptodate(bh);
 
 		set_buffer_uptodate(bh);
@@ -570,18 +609,27 @@ int ext4_wait_block_bitmap(struct super_block *sb, ext4_group_t block_group,
 	desc = ext4_get_group_desc(sb, block_group, NULL);
 	if (!desc)
 		return -EFSCORRUPTED;
+
+	/* OyTao: 等待unlock buffer head*/
 	wait_on_buffer(bh);
+
 	if (!buffer_uptodate(bh)) {
 		ext4_error(sb, "Cannot read block bitmap - "
 			   "block_group = %u, block_bitmap = %llu",
 			   block_group, (unsigned long long) bh->b_blocknr);
 		return -EIO;
 	}
+
 	clear_buffer_new(bh);
+
 	/* Panic or remount fs read-only if block bitmap is invalid */
 	return ext4_validate_block_bitmap(sb, desc, block_group, bh);
 }
 
+/*
+ * OyTao: 确保block bitmap对应的buffer head已经拥有了最新的数据。
+ * 不管是刚初始化的，或者是page-cache,亦或者是从磁盘上读取的。
+ */
 struct buffer_head *
 ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
 {
@@ -591,11 +639,13 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
 	bh = ext4_read_block_bitmap_nowait(sb, block_group);
 	if (IS_ERR(bh))
 		return bh;
+
 	err = ext4_wait_block_bitmap(sb, block_group, bh);
 	if (err) {
 		put_bh(bh);
 		return ERR_PTR(err);
 	}
+
 	return bh;
 }
 

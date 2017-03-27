@@ -90,8 +90,8 @@ struct ext4_free_data {
 	ext4_group_t			efd_group;
 
 	/* free block extent */
-	ext4_grpblk_t			efd_start_cluster;
-	ext4_grpblk_t			efd_count;
+	ext4_grpblk_t			efd_start_cluster; /* OyTao: in cluster unit */
+	ext4_grpblk_t			efd_count; /* OyTao: in cluster unit */
 
 	/* transaction which freed this extent */
 	tid_t				efd_tid;

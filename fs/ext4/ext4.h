@@ -1535,6 +1535,7 @@ struct ext4_sb_info {
 	spinlock_t s_md_lock;
 
 	unsigned short *s_mb_offsets;
+
 	unsigned int *s_mb_maxs;
 
 	unsigned int s_group_info_size;
@@ -2987,6 +2988,7 @@ int ext4_update_disksize_before_punch(struct inode *inode, loff_t offset,
 struct ext4_group_info {
 	unsigned long   bb_state;
 
+	/* OyTao: TODO */
 	struct rb_root  bb_free_root;
 
 	ext4_grpblk_t	bb_first_free;	/* first free block */
@@ -2997,6 +2999,7 @@ struct ext4_group_info {
 
 	ext4_grpblk_t	bb_largest_free_order;/* order of largest frag in BG */
 
+	/* OyTao: TODO */
 	struct          list_head bb_prealloc_list;
 
 #ifdef DOUBLE_CHECK

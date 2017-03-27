@@ -373,6 +373,9 @@ static void ext4_mb_generate_from_freelist(struct super_block *sb, void *bitmap,
 static void ext4_free_data_callback(struct super_block *sb,
 				struct ext4_journal_cb_entry *jce, int rc);
 
+/* 
+ * OyTao: @addr: 
+ */
 static inline void *mb_correct_addr_and_bit(int *bit, void *addr)
 {
 #if BITS_PER_LONG == 64
@@ -432,6 +435,7 @@ static inline int mb_find_next_bit(void *addr, int max, int start)
 {
 	int fix = 0, ret, tmpmax;
 	addr = mb_correct_addr_and_bit(&fix, addr);
+
 	tmpmax = max + fix;
 	start += fix;
 
@@ -676,25 +680,33 @@ static void ext4_mb_mark_free_simple(struct super_block *sb,
 
 	BUG_ON(len > EXT4_CLUSTERS_PER_GROUP(sb));
 
+	/* OyTao: TODO */
 	border = 2 << sb->s_blocksize_bits;
 
 	while (len > 0) {
 		/* find how many blocks can be covered since this position */
+		/* OyTao: TODO */
 		max = ffs(first | border) - 1;
 
 		/* find how many blocks of power 2 we need to mark */
+		/* OyTao: */
 		min = fls(len) - 1;
 
 		if (max < min)
 			min = max;
+		/* OyTao: */
 		chunk = 1 << min;
 
 		/* mark multiblock chunks only */
+		/* OyTao: min对应的order的counters 加1 */
 		grp->bb_counters[min]++;
+
+		/* OyTao: */
 		if (min > 0)
 			mb_clear_bit(first >> min,
 				     buddy + sbi->s_mb_offsets[min]);
 
+		/* OyTao: */
 		len -= chunk;
 		first += chunk;
 	}
@@ -739,6 +751,7 @@ void ext4_mb_generate_buddy(struct super_block *sb,
 	 * of on-disk bitmap and preallocations */
 	i = mb_find_next_zero_bit(bitmap, max, 0);
 	grp->bb_first_free = i;
+
 	while (i < max) {
 		fragments++;
 		first = i;
@@ -749,9 +762,11 @@ void ext4_mb_generate_buddy(struct super_block *sb,
 			ext4_mb_mark_free_simple(sb, buddy, first, len, grp);
 		else
 			grp->bb_counters[0]++;
+
 		if (i < max)
 			i = mb_find_next_zero_bit(bitmap, max, i);
 	}
+
 	grp->bb_fragments = fragments;
 
 	if (free != grp->bb_free) {
@@ -881,6 +896,10 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 			continue;
 		}
 
+		/* 
+		 * OyTao: 读取对应的group的block bitmap, 如果uninit,则初始化bitmap.
+		 * (设置上meta blocks对应的flags 
+		 */
 		bh[i] = ext4_read_block_bitmap_nowait(sb, group);
 		if (IS_ERR(bh[i])) {
 			err = PTR_ERR(bh[i]);
@@ -896,13 +915,18 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 
 		if (!bh[i])
 			continue;
+		/* OyTao:wait on buffer,等read block bitmap完成  */
 		err2 = ext4_wait_block_bitmap(sb, group, bh[i]);
 		if (!err)
 			err = err2;
 	}
 
+	/* OyTao: 遍历所有的block, 偶数block为bitmap block,
+	 * 奇数为buddy block.
+	 */
 	first_block = page->index * blocks_per_page;
 	for (i = 0; i < blocks_per_page; i++) {
+		/* OyTao: 计算得到对应的group idx */
 		group = (first_block + i) >> 1;
 		if (group >= ngroups)
 			break;
@@ -914,6 +938,7 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 		if (!buffer_verified(bh[group - first_group]))
 			/* Skip faulty bitmaps */
 			continue;
+
 		err = 0;
 
 		/*
@@ -921,6 +946,12 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 		 * particular group in the format specified
 		 * above
 		 *
+		 */
+		/* 
+		 * OyTao: data是page中的对应的数据。@page是在buddy inode的page cache中。
+		 * @bh[idx]则是在dev inode中读取的对应的block bitmap的page cache.
+		 * 二者在不同的page cache中。
+		 * 会把bh[idx]中的数据拷贝到@page中对应的位置（偶数位）
 		 */
 		data = page_address(page) + (i * blocksize);
 		bitmap = bh[group - first_group]->b_data;
@@ -931,12 +962,16 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 		 */
 		if ((first_block + i) & 1) {
 			/* this is block of buddy */
+			/* OyTao:初始化buddy cache */
 			BUG_ON(incore == NULL);
 			mb_debug(1, "put buddy for group %u in page %lu/%x\n",
 				group, page->index, i * blocksize);
 			trace_ext4_mb_buddy_bitmap_load(sb, group);
 			grinfo = ext4_get_group_info(sb, group);
+
 			grinfo->bb_fragments = 0;
+
+			/* OyTao: 清空bbcounters */
 			memset(grinfo->bb_counters, 0,
 			       sizeof(*grinfo->bb_counters) *
 				(sb->s_blocksize_bits+2));
@@ -944,11 +979,16 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 			 * incore got set to the group block bitmap below
 			 */
 			ext4_lock_group(sb, group);
+
 			/* init the buddy */
 			memset(data, 0xff, blocksize);
+
+			/* OyTao:根据group的bitmap @incore生成buddy cache. */
 			ext4_mb_generate_buddy(sb, data, incore, group);
+
 			ext4_unlock_group(sb, group);
 			incore = NULL;
+
 		} else {
 			/* this is block of bitmap */
 			BUG_ON(incore != NULL);
@@ -958,11 +998,18 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 
 			/* see comments in ext4_mb_put_pa() */
 			ext4_lock_group(sb, group);
+
+			/* OyTao: 将当前bitmap上包含的最新的数据拷贝对应buddy inode上的page中。*/
 			memcpy(data, bitmap, blocksize);
 
 			/* mark all preallocated blks used in in-core bitmap */
+			/* 
+			 * OyTao: 遍历所有的PAs, ext4_free_data of group block info,
+			 * 将每个包含的区域都在bitmap上设置 
+			 */
 			ext4_mb_generate_from_pa(sb, data, group);
 			ext4_mb_generate_from_freelist(sb, data, group);
+
 			ext4_unlock_group(sb, group);
 
 			/* set incore so that the buddy information can be
@@ -971,6 +1018,8 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 			incore = data;
 		}
 	}
+
+
 	SetPageUptodate(page);
 
 out:
@@ -1091,6 +1140,8 @@ int ext4_mb_init_group(struct super_block *sb, ext4_group_t group, gfp_t gfp)
 		goto err;
 	}
 
+	
+	/* OyTao: 初始化group对应的bitmap page */
 	page = e4b.bd_bitmap_page;
 	ret = ext4_mb_init_cache(page, NULL, gfp);
 	if (ret)
@@ -2151,6 +2202,7 @@ ext4_mb_regular_allocator(struct ext4_allocation_context *ac)
 	sb = ac->ac_sb;
 	sbi = EXT4_SB(sb);
 	ngroups = ext4_get_groups_count(sb);
+
 	/* non-extent files are limited to low blocks/groups */
 	/* OyTao:如果是extent files 则从super_info中获取 */
 	if (!(ext4_test_inode_flag(ac->ac_inode, EXT4_INODE_EXTENTS)))
@@ -2705,6 +2757,7 @@ int ext4_mb_init(struct super_block *sb)
 	sbi->s_mb_maxs[0] = sb->s_blocksize << 3;
 	sbi->s_mb_offsets[0] = 0;
 
+	/* OyTao: */
 	i = 1;
 	offset = 0;
 	offset_incr = 1 << (sb->s_blocksize_bits - 1);
@@ -3666,6 +3719,10 @@ ext4_mb_use_preallocated(struct ext4_allocation_context *ac)
  * buddy must be generated from this bitmap
  * Need to be called with the ext4 group lock held
  */
+/* 
+ * OyTao: 遍历所有的ext4_free_data in group_info，将对应的位置(efd_start_cluster,
+ * efd_start_cluster + efd_count)在bitmap上设置
+ */ 
 static void ext4_mb_generate_from_freelist(struct super_block *sb, void *bitmap,
 						ext4_group_t group)
 {
@@ -3689,6 +3746,7 @@ static void ext4_mb_generate_from_freelist(struct super_block *sb, void *bitmap,
  * used in in-core bitmap. buddy must be generated from this bitmap
  * Need to be called with ext4 group lock held
  */
+/* OyTao: 遍历所有的group所拥有的@pa，把所有的PA对应的区域都设置上 */
 static noinline_for_stack
 void ext4_mb_generate_from_pa(struct super_block *sb, void *bitmap,
 					ext4_group_t group)
@@ -3708,6 +3766,9 @@ void ext4_mb_generate_from_pa(struct super_block *sb, void *bitmap,
 	 * otherwise we could leave used blocks available for
 	 * allocation in buddy when concurrent ext4_mb_put_pa()
 	 * is dropping preallocation
+	 */
+	/*
+	 * OyTao: 1. 为什么不需要加锁 list。ext4 group lock held
 	 */
 	list_for_each(cur, &grp->bb_prealloc_list) {
 		pa = list_entry(cur, struct ext4_prealloc_space, pa_group_list);
