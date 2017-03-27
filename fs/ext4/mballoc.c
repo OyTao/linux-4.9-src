@@ -445,6 +445,7 @@ static inline int mb_find_next_bit(void *addr, int max, int start)
 	return ret;
 }
 
+/* OyTao: 按照order,找到对应的buddy bitmap start address以及max numbers */
 static void *mb_find_buddy(struct ext4_buddy *e4b, int order, int *max)
 {
 	char *bb;
@@ -458,6 +459,7 @@ static void *mb_find_buddy(struct ext4_buddy *e4b, int order, int *max)
 	}
 
 	/* at order 0 we see each particular block */
+	/* OyTao: 如果order == 0，则返回group bitmap */
 	if (order == 0) {
 		*max = 1 << (e4b->bd_blkbits + 3);
 		return e4b->bd_bitmap;
@@ -668,6 +670,7 @@ static int __mb_check_buddy(struct ext4_buddy *e4b, char *file,
  * Clear the bits in bitmap which the blocks of the chunk(s) covered,
  * then increase bb_counters[] for corresponded chunk size.
  */
+/* OyTao: TODO */
 static void ext4_mb_mark_free_simple(struct super_block *sb,
 				void *buddy, ext4_grpblk_t first, ext4_grpblk_t len,
 					struct ext4_group_info *grp)
@@ -689,24 +692,33 @@ static void ext4_mb_mark_free_simple(struct super_block *sb,
 		max = ffs(first | border) - 1;
 
 		/* find how many blocks of power 2 we need to mark */
-		/* OyTao: */
+		/* 
+		 * OyTao: 从最高位开始，清零对应的orders在buddy bitmap中的bit 
+		 * 例子:len: 100100
+		 * 清零2 ^(6-1)以及2^(3-1)在不同order对应的buddy bitmap上的bit.
+		 */
 		min = fls(len) - 1;
 
 		if (max < min)
 			min = max;
-		/* OyTao: */
+		
+		/* OyTao: chunk的numbers */
 		chunk = 1 << min;
 
 		/* mark multiblock chunks only */
 		/* OyTao: min对应的order的counters 加1 */
 		grp->bb_counters[min]++;
 
-		/* OyTao: */
+		/* 
+		 * OyTao: s_mb_offsets[min]是order为min的bitmap的start address
+		 * 参考ext4_mb_init函数
+		 * TODO: *如果first不是2^min的倍数， 如何处理？
+		 */
 		if (min > 0)
 			mb_clear_bit(first >> min,
 				     buddy + sbi->s_mb_offsets[min]);
 
-		/* OyTao: */
+		/* OyTao: 继续处理 */
 		len -= chunk;
 		first += chunk;
 	}
@@ -715,6 +727,9 @@ static void ext4_mb_mark_free_simple(struct super_block *sb,
 /*
  * Cache the order of the largest free extent we have available in this block
  * group.
+ */
+/*
+ * OyTao; 从最大的order开始，如果存在，则赋值给bb_largest_free_order
  */
 static void
 mb_set_largest_free_order(struct super_block *sb, struct ext4_group_info *grp)
@@ -758,6 +773,11 @@ void ext4_mb_generate_buddy(struct super_block *sb,
 		i = mb_find_next_bit(bitmap, max, i);
 		len = i - first;
 		free += len;
+
+		/*
+		 * OyTao:将(@first，@first + @len)局域按照最大聚合的方式，放入到
+		 * buddy bitmap中。
+		 */
 		if (len > 1)
 			ext4_mb_mark_free_simple(sb, buddy, first, len, grp);
 		else
@@ -767,8 +787,13 @@ void ext4_mb_generate_buddy(struct super_block *sb,
 			i = mb_find_next_zero_bit(bitmap, max, i);
 	}
 
+	/* OyTao: @bb_fragments 表示有多少个空闲片段*/
 	grp->bb_fragments = fragments;
 
+	/* 
+	 * OyTao:如果从bitmap中获取的free clusters与group_info中的不一致，则以
+	 * bitmap中获取的为准。
+	 */
 	if (free != grp->bb_free) {
 		ext4_grp_locked_error(sb, group, 0, 0,
 				      "block bitmap and bg descriptor "
@@ -782,13 +807,19 @@ void ext4_mb_generate_buddy(struct super_block *sb,
 		if (!EXT4_MB_GRP_BBITMAP_CORRUPT(grp))
 			percpu_counter_sub(&sbi->s_freeclusters_counter,
 					   grp->bb_free);
+		/* OyTao: 设置对应的CORRUPT_BIT */
 		set_bit(EXT4_GROUP_INFO_BBITMAP_CORRUPT_BIT, &grp->bb_state);
 	}
+
+	/* OyTao: 更新bb_largest_free_order 值 */
 	mb_set_largest_free_order(sb, grp);
 
+	/* OyTao:到目前为止，buddy bitmap都已经初始化，清除NEED_INIT_BIT */
 	clear_bit(EXT4_GROUP_INFO_NEED_INIT_BIT, &(grp->bb_state));
 
 	period = get_cycles() - period;
+
+	/* OyTao: TODO(统计信息) */
 	spin_lock(&EXT4_SB(sb)->s_bal_lock);
 	EXT4_SB(sb)->s_mb_buddies_generated++;
 	EXT4_SB(sb)->s_mb_generation_time += period;
@@ -833,6 +864,20 @@ static void mb_regenerate_buddy(struct ext4_buddy *e4b)
  * for this page; do not hold this lock when calling this routine!
  */
 
+/* 
+ * OyTao:
+ * @page:是group bitmap对应的pag.
+ * 如果group bitmap以及buddy bitmap在同一个page中，对group bitmap以及buddy bitmap
+ * 都要初始化. 
+ *
+ * 首先要init group bitmap(可以从group_desc中获取对应的bitmap在磁盘上位置，读取)
+ * 然后需要遍历所有的PAs以及free_datas，设置上对应bit.
+ *
+ * 然后根据已经初始化完成的group bitmap，得到所有的free clusters, 按照buddy order
+ * 最大可能性设置为free.
+ *
+ * 如果group bitmap与buddy bitmap不在同一个page，则incore为group bitmap.
+ */
 static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 {
 	ext4_group_t ngroups;
@@ -983,7 +1028,7 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 			/* init the buddy */
 			memset(data, 0xff, blocksize);
 
-			/* OyTao:根据group的bitmap @incore生成buddy cache. */
+			/* OyTao:根据group的bitmap @incore生成buddy bitmap. */
 			ext4_mb_generate_buddy(sb, data, incore, group);
 
 			ext4_unlock_group(sb, group);
@@ -1020,9 +1065,11 @@ static int ext4_mb_init_cache(struct page *page, char *incore, gfp_t gfp)
 	}
 
 
+	/* OyTao:设置对应的page数据最新 */
 	SetPageUptodate(page);
 
 out:
+	/* OyTao: 可以put buffer now */
 	if (bh) {
 		for (i = 0; i < groups_per_page; i++)
 			brelse(bh[i]);
@@ -1098,6 +1145,7 @@ static void ext4_mb_put_buddy_page_lock(struct ext4_buddy *e4b)
 		unlock_page(e4b->bd_bitmap_page);
 		put_page(e4b->bd_bitmap_page);
 	}
+
 	if (e4b->bd_buddy_page) {
 		unlock_page(e4b->bd_buddy_page);
 		put_page(e4b->bd_buddy_page);
@@ -1108,6 +1156,10 @@ static void ext4_mb_put_buddy_page_lock(struct ext4_buddy *e4b)
  * Locking note:  This routine calls ext4_mb_init_cache(), which takes the
  * block group lock of all groups for this page; do not hold the BG lock when
  * calling this routine!
+ */
+
+/*
+ * OyTao: 会对group的bitmap已经buddy bitmap都会进行初始化。
  */
 static noinline_for_stack
 int ext4_mb_init_group(struct super_block *sb, ext4_group_t group, gfp_t gfp)
@@ -1160,7 +1212,12 @@ int ext4_mb_init_group(struct super_block *sb, ext4_group_t group, gfp_t gfp)
 		ret = 0;
 		goto err;
 	}
+
 	/* init buddy cache */
+	/* 
+	 * OyTao: 如果buddy bitmap与group bitmap在同一个page, 则已经在上一个
+	 * ext4_mb_init_cache中已经初始化完成。
+	 */
 	page = e4b.bd_buddy_page;
 	ret = ext4_mb_init_cache(page, e4b.bd_bitmap, gfp);
 	if (ret)
@@ -1169,7 +1226,12 @@ int ext4_mb_init_group(struct super_block *sb, ext4_group_t group, gfp_t gfp)
 		ret = -EIO;
 		goto err;
 	}
+
 err:
+	/* 
+	 * OyTao: 在 ext4_mb_get_buddy_page_lock分别获取了buddy page已经group page
+	 * hold, & locked, 所以在此处put and unlock 
+	 */
 	ext4_mb_put_buddy_page_lock(&e4b);
 	return ret;
 }
@@ -1230,6 +1292,7 @@ ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 		 * we need full data about the group
 		 * to make a good selection
 		 */
+		/* OyTao: 初始化group对应的group bitmap以及buddy bitmap */
 		ret = ext4_mb_init_group(sb, group, gfp);
 		if (ret)
 			return ret;
@@ -1240,6 +1303,8 @@ ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 	 * and buddy information in consecutive blocks.
 	 * So for each group we need two blocks.
 	 */
+
+	/* OyTao:处理group bitmap */
 	block = group * 2;
 	pnum = block / blocks_per_page;
 	poff = block % blocks_per_page;
@@ -1262,21 +1327,26 @@ ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 		if (page) {
 			BUG_ON(page->mapping != inode->i_mapping);
 			if (!PageUptodate(page)) {
+				/* OyTao: 需要init cache */
 				ret = ext4_mb_init_cache(page, NULL, gfp);
 				if (ret) {
 					unlock_page(page);
 					goto err;
 				}
+
+				/* OyTao: TODO */
 				mb_cmp_bitmaps(e4b, page_address(page) +
 					       (poff * sb->s_blocksize));
 			}
 			unlock_page(page);
 		}
 	}
+
 	if (page == NULL) {
 		ret = -ENOMEM;
 		goto err;
 	}
+
 	if (!PageUptodate(page)) {
 		ret = -EIO;
 		goto err;
@@ -1286,6 +1356,7 @@ ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 	e4b->bd_bitmap_page = page;
 	e4b->bd_bitmap = page_address(page) + (poff * sb->s_blocksize);
 
+	/* OyTao: 处理buddy bitmap */
 	block++;
 	pnum = block / blocks_per_page;
 	poff = block % blocks_per_page;
@@ -1308,6 +1379,7 @@ ext4_mb_load_buddy_gfp(struct super_block *sb, ext4_group_t group,
 			unlock_page(page);
 		}
 	}
+
 	if (page == NULL) {
 		ret = -ENOMEM;
 		goto err;
@@ -1338,6 +1410,9 @@ err:
 	return ret;
 }
 
+/* 
+ * OyTao: 初始化group对应的group bitmap以及buddy bitmap.
+ */
 static int ext4_mb_load_buddy(struct super_block *sb, ext4_group_t group,
 			      struct ext4_buddy *e4b)
 {
@@ -1362,6 +1437,10 @@ static int mb_find_order_for_block(struct ext4_buddy *e4b, int block)
 	BUG_ON(e4b->bd_bitmap == e4b->bd_buddy);
 	BUG_ON(block >= (1 << (e4b->bd_blkbits + 3)));
 
+	/* 
+	 * OyTao: 从order = 1 -->  order = blkbits + 1, 如果block所在的order idx
+	 * 在buddy bitmap为free. 则返回
+	 */
 	bb = e4b->bd_buddy;
 	while (order <= e4b->bd_blkbits + 1) {
 		block = block >> 1;
@@ -1373,6 +1452,7 @@ static int mb_find_order_for_block(struct ext4_buddy *e4b, int block)
 		bb_incr >>= 1;
 		order++;
 	}
+
 	return 0;
 }
 
@@ -1607,6 +1687,10 @@ static int mb_find_extent(struct ext4_buddy *e4b, int block,
 	assert_spin_locked(ext4_group_lock_ptr(e4b->bd_sb, e4b->bd_group));
 	BUG_ON(ex == NULL);
 
+	/*
+	 * OyTao: 在group bitmap (order == 0)看对应的block是否是空，如果已经分配出去，
+	 * 则return 0
+	 */
 	buddy = mb_find_buddy(e4b, 0, &max);
 	BUG_ON(buddy == NULL);
 	BUG_ON(block >= max);
@@ -1616,6 +1700,7 @@ static int mb_find_extent(struct ext4_buddy *e4b, int block,
 		ex->fe_group = 0;
 		return 0;
 	}
+
 
 	/* find actual order */
 	order = mb_find_order_for_block(e4b, block);
@@ -1927,10 +2012,12 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 	if (grp->bb_free == 0)
 		return 0;
 
+	/* OyTao: load group 对应的group bitmap以及buddy bitmap. */
 	err = ext4_mb_load_buddy(ac->ac_sb, group, e4b);
 	if (err)
 		return err;
 
+	/* OyTao:TODO */
 	if (unlikely(EXT4_MB_GRP_BBITMAP_CORRUPT(e4b->bd_info))) {
 		ext4_mb_unload_buddy(e4b);
 		return 0;
@@ -1969,6 +2056,7 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 		ac->ac_b_ex = ex;
 		ext4_mb_use_best_found(ac, e4b);
 	}
+
 	ext4_unlock_group(ac->ac_sb, group);
 	ext4_mb_unload_buddy(e4b);
 
@@ -2753,11 +2841,25 @@ int ext4_mb_init(struct super_block *sb)
 		goto out;
 
 	/* order 0 is regular bitmap */
-	/* OyTao: TODO */
+	/*
+	 * OyTao: buddy bitmap占有一个block,所以max clusters == blocksize << 3 
+	 * 2^0 不在buddy bitmap中，在block bitmap中。
+	 */
 	sbi->s_mb_maxs[0] = sb->s_blocksize << 3;
 	sbi->s_mb_offsets[0] = 0;
 
-	/* OyTao: */
+	/*
+	 * OyTao: 
+	 * s_mb_offsets[i](是buddy bitmap order = 2^i的对应的bitmap在buddy bitmap
+	 * 上的offset.
+	 * 从s_mb_offset[i] + buddy_bitmap_starts是order = 2 ^ i的bitmaps.
+	 *
+	 * 0 ---------------- 1 << (blocksize_bits - 1)  2^1  
+	 * 
+	 * TODO: 怎么确保s_mb_maxs[i] * 2^i 可以包含group内所有的clusters.
+	 * 如果不能包含，会不会造成空间的浪费？ 
+	 *   
+	 */
 	i = 1;
 	offset = 0;
 	offset_incr = 1 << (sb->s_blocksize_bits - 1);

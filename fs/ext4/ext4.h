@@ -2995,6 +2995,10 @@ struct ext4_group_info {
 
 	ext4_grpblk_t	bb_free;	/* total free blocks */
 
+	/*
+	 * OyTao: @bb_fragments 表示有多少个空闲片段 
+	 * 参考ext4_mb_generate_buddy 函数 
+	 */
 	ext4_grpblk_t	bb_fragments;	/* nr of freespace fragments */
 
 	ext4_grpblk_t	bb_largest_free_order;/* order of largest frag in BG */

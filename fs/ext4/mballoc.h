@@ -222,8 +222,11 @@ struct ext4_buddy {
 	void *bd_bitmap;
 
 	struct ext4_group_info *bd_info;
+
 	struct super_block *bd_sb;
+
 	__u16 bd_blkbits;
+
 	ext4_group_t bd_group;
 };
 
