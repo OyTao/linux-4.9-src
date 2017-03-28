@@ -505,6 +505,7 @@ static void mb_mark_used_double(struct ext4_buddy *e4b, int first, int count)
 	if (unlikely(e4b->bd_info->bb_bitmap == NULL))
 		return;
 	assert_spin_locked(ext4_group_lock_ptr(e4b->bd_sb, e4b->bd_group));
+
 	for (i = 0; i < count; i++) {
 		BUG_ON(mb_test_bit(first + i, e4b->bd_info->bb_bitmap));
 		mb_set_bit(first + i, e4b->bd_info->bb_bitmap);
@@ -688,7 +689,7 @@ static void ext4_mb_mark_free_simple(struct super_block *sb,
 
 	while (len > 0) {
 		/* find how many blocks can be covered since this position */
-		/* OyTao: TODO */
+		/* OyTao: max是first最大的2的幂能被整除的 */
 		max = ffs(first | border) - 1;
 
 		/* find how many blocks of power 2 we need to mark */
@@ -699,6 +700,7 @@ static void ext4_mb_mark_free_simple(struct super_block *sb,
 		 */
 		min = fls(len) - 1;
 
+		/* OyTao: 确保first能够是2^min的倍数 */
 		if (max < min)
 			min = max;
 		
@@ -712,7 +714,7 @@ static void ext4_mb_mark_free_simple(struct super_block *sb,
 		/* 
 		 * OyTao: s_mb_offsets[min]是order为min的bitmap的start address
 		 * 参考ext4_mb_init函数
-		 * TODO: *如果first不是2^min的倍数， 如何处理？
+		 * max与min的比较，已经保证first肯定是2^min的倍数
 		 */
 		if (min > 0)
 			mb_clear_bit(first >> min,
@@ -748,6 +750,7 @@ mb_set_largest_free_order(struct super_block *sb, struct ext4_group_info *grp)
 	}
 }
 
+/* OyTao: 根据group bitmap生成buddy bitmap */
 static noinline_for_stack
 void ext4_mb_generate_buddy(struct super_block *sb,
 				void *buddy, void *bitmap, ext4_group_t group)
@@ -1428,6 +1431,9 @@ static void ext4_mb_unload_buddy(struct ext4_buddy *e4b)
 }
 
 
+/* 
+ * OyTao: 从@block开始找到连续空闲的块对应的order.
+ */
 static int mb_find_order_for_block(struct ext4_buddy *e4b, int block)
 {
 	int order = 1;
@@ -1448,6 +1454,7 @@ static int mb_find_order_for_block(struct ext4_buddy *e4b, int block)
 			/* this block is part of buddy of order 'order' */
 			return order;
 		}
+
 		bb += bb_incr;
 		bb_incr >>= 1;
 		order++;
@@ -1677,6 +1684,13 @@ done:
 	mb_check_buddy(e4b);
 }
 
+/* OyTao: 
+ * 尝试分配连续的空间，返回值是连续的空间的大小，可能小于@needed,
+ * 分配的信息在@ex中;
+ * 以@block为goal start block，开始进行分配。
+ * ex.fe_start是block
+ * ex.fe_len是最终分配的长度
+ **/
 static int mb_find_extent(struct ext4_buddy *e4b, int block,
 				int needed, struct ext4_free_extent *ex)
 {
@@ -1706,6 +1720,7 @@ static int mb_find_extent(struct ext4_buddy *e4b, int block,
 	order = mb_find_order_for_block(e4b, block);
 	block = block >> order;
 
+	/* OyTao: 分配一个order */
 	ex->fe_len = 1 << order;
 	ex->fe_start = block << order;
 	ex->fe_group = e4b->bd_group;
@@ -1715,6 +1730,17 @@ static int mb_find_extent(struct ext4_buddy *e4b, int block,
 	ex->fe_len -= next;
 	ex->fe_start += next;
 
+	/* 
+	 * OyTao: 
+	 * 尝试连续分配@needed. 分配的必须是连续的空闲块。
+	 * 如果需要的@needed是当前分配的长度，需要继续分配.
+	 * @block现在是以分配的2^order的边界。继续分配的话
+	 * next = (block + 1) * ( 1<< order) :是下一个块。
+	 *
+	 * 首先则检测该block是否是空闲。如果不空闲，则退出。
+	 * 如果空闲，则寻找可以分配的的order.同时分配出去。
+	 * fe_len += 1 <<order.
+	 */
 	while (needed > ex->fe_len &&
 	       mb_find_buddy(e4b, order, &max)) {
 
@@ -1722,9 +1748,11 @@ static int mb_find_extent(struct ext4_buddy *e4b, int block,
 			break;
 
 		next = (block + 1) * (1 << order);
+		/* OyTao: 如果块不空闲，则退出 */
 		if (mb_test_bit(next, e4b->bd_bitmap))
 			break;
 
+		/* OyTao:从@next开始寻找连续空闲的块对应的order */
 		order = mb_find_order_for_block(e4b, next);
 
 		block = next >> order;
@@ -1749,19 +1777,28 @@ static int mb_mark_used(struct ext4_buddy *e4b, struct ext4_free_extent *ex)
 
 	BUG_ON(start + len > (e4b->bd_sb->s_blocksize << 3));
 	BUG_ON(e4b->bd_group != ex->fe_group);
+
 	assert_spin_locked(ext4_group_lock_ptr(e4b->bd_sb, e4b->bd_group));
+
+	/* OyTao:only check */
 	mb_check_buddy(e4b);
+
+	/* OyTao: double check TODO */
 	mb_mark_used_double(e4b, start, len);
 
+	/* OyTao: group fre blocks(chulster unit ) */
 	e4b->bd_info->bb_free -= len;
+
 	if (e4b->bd_info->bb_first_free == start)
 		e4b->bd_info->bb_first_free += len;
 
 	/* let's maintain fragments counter */
 	if (start != 0)
 		mlen = !mb_test_bit(start - 1, e4b->bd_bitmap);
+
 	if (start + len < EXT4_SB(e4b->bd_sb)->s_mb_maxs[0])
 		max = !mb_test_bit(start + len, e4b->bd_bitmap);
+
 	if (mlen && max)
 		e4b->bd_info->bb_fragments++;
 	else if (!mlen && !max)
@@ -1771,13 +1808,18 @@ static int mb_mark_used(struct ext4_buddy *e4b, struct ext4_free_extent *ex)
 	while (len) {
 		ord = mb_find_order_for_block(e4b, start);
 
+		/* OyTao: 如果是一个完整的order */
 		if (((start >> ord) << ord) == start && len >= (1 << ord)) {
 			/* the whole chunk may be allocated at once! */
 			mlen = 1 << ord;
 			buddy = mb_find_buddy(e4b, ord, &max);
 			BUG_ON((start >> ord) >= max);
+			/* OyTao: 在对应的buddy bitmap,一个完整的order, 设置对应的bit */
 			mb_set_bit(start >> ord, buddy);
+
+			/* OyTao: 对应order的数目-- */
 			e4b->bd_info->bb_counters[ord]--;
+
 			start += mlen;
 			len -= mlen;
 			BUG_ON(len < 0);
@@ -1790,6 +1832,9 @@ static int mb_mark_used(struct ext4_buddy *e4b, struct ext4_free_extent *ex)
 
 		/* we have to split large buddy */
 		BUG_ON(ord <= 0);
+		
+		/* OyTao: 如果不是一个完整的Order, 则需要将当前的order split */
+		 *	
 		buddy = mb_find_buddy(e4b, ord, &max);
 		mb_set_bit(start >> ord, buddy);
 		e4b->bd_info->bb_counters[ord]--;
@@ -1802,6 +1847,7 @@ static int mb_mark_used(struct ext4_buddy *e4b, struct ext4_free_extent *ex)
 		e4b->bd_info->bb_counters[ord]++;
 		e4b->bd_info->bb_counters[ord]++;
 	}
+
 	mb_set_largest_free_order(e4b->bd_sb, e4b->bd_info);
 
 	ext4_set_bits(e4b->bd_bitmap, ex->fe_start, len0);
@@ -1822,12 +1868,16 @@ static void ext4_mb_use_best_found(struct ext4_allocation_context *ac,
 	BUG_ON(ac->ac_b_ex.fe_group != e4b->bd_group);
 	BUG_ON(ac->ac_status == AC_STATUS_FOUND);
 
+	/* OyTao: TODO */
 	ac->ac_b_ex.fe_len = min(ac->ac_b_ex.fe_len, ac->ac_g_ex.fe_len);
 	ac->ac_b_ex.fe_logical = ac->ac_g_ex.fe_logical;
+
+	/* OyTao:　TODO */
 	ret = mb_mark_used(e4b, &ac->ac_b_ex);
 
 	/* preallocation can change ac_b_ex, thus we store actually
 	 * allocated blocks for history */
+	/* OyTao: TODO　*/
 	ac->ac_f_ex = ac->ac_b_ex;
 
 	ac->ac_status = AC_STATUS_FOUND;
@@ -1845,6 +1895,7 @@ static void ext4_mb_use_best_found(struct ext4_allocation_context *ac,
 	get_page(ac->ac_bitmap_page);
 	ac->ac_buddy_page = e4b->bd_buddy_page;
 	get_page(ac->ac_buddy_page);
+
 	/* store last allocated for subsequent stream allocation */
 	if (ac->ac_flags & EXT4_MB_STREAM_ALLOC) {
 		spin_lock(&sbi->s_md_lock);
@@ -2024,21 +2075,32 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 	}
 
 	ext4_lock_group(ac->ac_sb, group);
+
+	/* OyTao:尝试按照goal对应的目标start block去分配连续的空间 */
 	max = mb_find_extent(e4b, ac->ac_g_ex.fe_start,
 			     ac->ac_g_ex.fe_len, &ex);
 	ex.fe_logical = 0xDEADFA11; /* debug value */
 
+	/* OyTao: Stripe 分配 TODO */
+	/* OyTao: 正常情况下会执行
+	 *	ac->ac_found++;
+	 *  ac->ac_b_ex = ex;
+	 *  ext4_mb_use_best_found(ac, e4b);
+	 */
 	if (max >= ac->ac_g_ex.fe_len && ac->ac_g_ex.fe_len == sbi->s_stripe) {
 		ext4_fsblk_t start;
 
 		start = ext4_group_first_block_no(ac->ac_sb, e4b->bd_group) +
 			ex.fe_start;
+
 		/* use do_div to get remainder (would be 64-bit modulo) */
+		/* OyTao: 如果没有s_stripe对齐，则需要重新分配 TODO */
 		if (do_div(start, sbi->s_stripe) == 0) {
 			ac->ac_found++;
 			ac->ac_b_ex = ex;
 			ext4_mb_use_best_found(ac, e4b);
 		}
+
 	} else if (max >= ac->ac_g_ex.fe_len) {
 		BUG_ON(ex.fe_len <= 0);
 		BUG_ON(ex.fe_group != ac->ac_g_ex.fe_group);
@@ -2046,15 +2108,18 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 		ac->ac_found++;
 		ac->ac_b_ex = ex;
 		ext4_mb_use_best_found(ac, e4b);
+
 	} else if (max > 0 && (ac->ac_flags & EXT4_MB_HINT_MERGE)) {
 		/* Sometimes, caller may want to merge even small
 		 * number of blocks to an existing extent */
 		BUG_ON(ex.fe_len <= 0);
 		BUG_ON(ex.fe_group != ac->ac_g_ex.fe_group);
 		BUG_ON(ex.fe_start != ac->ac_g_ex.fe_start);
+		
 		ac->ac_found++;
 		ac->ac_b_ex = ex;
 		ext4_mb_use_best_found(ac, e4b);
+
 	}
 
 	ext4_unlock_group(ac->ac_sb, group);
@@ -2905,7 +2970,7 @@ int ext4_mb_init(struct super_block *sb)
 	 * the stripes.
 	 */
 	if (sbi->s_stripe > 1) {
-		/* OyTao: s_mb_group_prealloc = s_mb_group_prealloc / s_stripe 向上取整 */
+		/* OyTao: s_mb_group_prealloc = s_mb_group_prealloc / s_stripe  * s_mb_prealloc向上取整 */
 		sbi->s_mb_group_prealloc = roundup(
 			sbi->s_mb_group_prealloc, sbi->s_stripe);
 	}
@@ -5495,6 +5560,7 @@ __acquires(bitlock)
 	 */
 	mb_mark_used(e4b, &ex);
 	ext4_unlock_group(sb, group);
+
 	ret = ext4_issue_discard(sb, group, start, count);
 	ext4_lock_group(sb, group);
 	mb_free_blocks(NULL, e4b, start, ex.fe_len);

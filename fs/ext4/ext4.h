@@ -1542,7 +1542,9 @@ struct ext4_sb_info {
 	unsigned int s_mb_free_pending;
 
 	/* tunables */
-	unsigned long s_stripe;
+	/* OyTao: TODO */
+	/nsigned long s_stripe;
+
 	unsigned int s_mb_stream_request;
 	unsigned int s_mb_max_to_scan;
 	unsigned int s_mb_min_to_scan;
