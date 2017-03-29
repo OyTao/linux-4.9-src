@@ -176,8 +176,8 @@ struct ext4_locality_group {
 };
 
 struct ext4_allocation_context {
-
 	struct inode *ac_inode;
+
 	struct super_block *ac_sb;
 
 	/* original request */
@@ -193,14 +193,22 @@ struct ext4_allocation_context {
 	struct ext4_free_extent ac_f_ex;
 
 	__u16 ac_groups_scanned;
+
 	__u16 ac_found;
+
 	__u16 ac_tail;
+
 	__u16 ac_buddy;
+
 	__u16 ac_flags;		/* allocation hints */
+
 	__u8 ac_status;
+
 	__u8 ac_criteria;
+
 	__u8 ac_2order;		/* if request is to allocate 2^N blocks and
 				 * N > 0, the field stores N, otherwise 0 */
+
 	__u8 ac_op;		/* operation, for history only */
 
 	struct page *ac_bitmap_page;

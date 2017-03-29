@@ -118,6 +118,7 @@ enum SHIFT_DIRECTION {
 #define EXT4_MB_HINT_METADATA		0x0004
 
 /* first blocks in the file */
+/* OyTao: 找到第一个就返回 */
 #define EXT4_MB_HINT_FIRST		0x0008
 
 /* search for the best chunk */
@@ -1552,7 +1553,9 @@ struct ext4_sb_info {
 	unsigned int s_mb_order2_reqs;
 	unsigned int s_mb_group_prealloc;
 	unsigned int s_max_dir_size_kb;
+
 	/* where last allocation was done - for stream allocation */
+	/* OyTao: 分配成功后，如果是STREAM_ALLOC，则cache刚刚分配的, 在s_md_lock的保护下 */
 	unsigned long s_mb_last_group;
 	unsigned long s_mb_last_start;
 

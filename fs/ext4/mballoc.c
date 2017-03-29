@@ -1685,12 +1685,14 @@ done:
 }
 
 /* OyTao: 
- * 尝试分配连续的空间，返回值是连续的空间的大小，可能小于@needed,
+ * 尝试分配连续的空间，返回值是连续的空间的大小，可能小于@needed, 也可能大于@needed
+ * 分配的空间都是以order为单位，不同的order组合。
+ * 如： 2^5 + 2^4.
  * 分配的信息在@ex中;
  * 以@block为goal start block，开始进行分配。
  * ex.fe_start是block
  * ex.fe_len是最终分配的长度
- **/
+ */
 static int mb_find_extent(struct ext4_buddy *e4b, int block,
 				int needed, struct ext4_free_extent *ex)
 {
@@ -1717,6 +1719,7 @@ static int mb_find_extent(struct ext4_buddy *e4b, int block,
 
 
 	/* find actual order */
+	/* OyTao: 根据@block所在的位置，看在哪个order中是free状态, 有可能会返回0 */
 	order = mb_find_order_for_block(e4b, block);
 	block = block >> order;
 
@@ -1763,6 +1766,15 @@ static int mb_find_extent(struct ext4_buddy *e4b, int block,
 	return ex->fe_len;
 }
 
+/*
+ * OyTao: 根据ex中的fe_start, fe_len在fe_group中设置对应的order bitmap.
+ * 包括buddy bitmap以及group bitmap.
+ * 在buddy bitmap,如果@fe_start以及@fe_len不能与当前的order所对齐，也就是不能
+ * 完整包含了一个order, 则需要切分当前的order，以满足(@fe_start, @fe_start + len)
+ * 可以完整包含一个order。
+ *
+ * 因为可能分配的是一个order中的一个整体，但是需要的fe_len小于该值，所以需要切分。
+ */
 static int mb_mark_used(struct ext4_buddy *e4b, struct ext4_free_extent *ex)
 {
 	int ord;
@@ -1827,14 +1839,15 @@ static int mb_mark_used(struct ext4_buddy *e4b, struct ext4_free_extent *ex)
 		}
 
 		/* store for history */
+		/* OyTao: TODO */
 		if (ret == 0)
 			ret = len | (ord << 16);
 
 		/* we have to split large buddy */
 		BUG_ON(ord <= 0);
 		
-		/* OyTao: 如果不是一个完整的Order, 则需要将当前的order split */
-		 *	
+		/* OyTao: 如果不是一个完整的Order, 则需要将当前的order split,
+		 * 切分成2个order >> 1的order。*/
 		buddy = mb_find_buddy(e4b, ord, &max);
 		mb_set_bit(start >> ord, buddy);
 		e4b->bd_info->bb_counters[ord]--;
@@ -1842,15 +1855,20 @@ static int mb_mark_used(struct ext4_buddy *e4b, struct ext4_free_extent *ex)
 		ord--;
 		cur = (start >> ord) & ~1U;
 		buddy = mb_find_buddy(e4b, ord, &max);
+
+		/* OyTao: 切分后的order对应的bitmap 清零 */
 		mb_clear_bit(cur, buddy);
 		mb_clear_bit(cur + 1, buddy);
 		e4b->bd_info->bb_counters[ord]++;
 		e4b->bd_info->bb_counters[ord]++;
 	}
 
+	/* OyTao: 更新largest_free_order  */
 	mb_set_largest_free_order(e4b->bd_sb, e4b->bd_info);
 
+	/* OyTao: 更新group bitmap */
 	ext4_set_bits(e4b->bd_bitmap, ex->fe_start, len0);
+
 	mb_check_buddy(e4b);
 
 	return ret;
@@ -1858,6 +1876,21 @@ static int mb_mark_used(struct ext4_buddy *e4b, struct ext4_free_extent *ex)
 
 /*
  * Must be called under group lock!
+ */
+/*
+ * OyTao: 修为要修改order,以及bitmap(group buddy),所以条用着必须hold group lock.
+ *
+ * 1) 修正ac_b_ex.fe_len  (通过mb_find_extent得到的@fe_len即ac_b_ex.fe_len
+ *    可能会大于needed(ac_g_ex.fe_len), 所以需要取二者中的最小值。
+ *
+ * 2) 把真实的局域@fe_start, @fe_len，在group bitmap以及buddy bitmap中set.
+ *    在此过程中可能会涉及到order的split操作。(@fe_len不是一个完整的order)
+ *
+ * 3) ac_f_ex = ac_b_ex
+ *
+ * 4) 修改ac_status为AC_STATUS_FOUND;
+ *
+ * 5) STREAM_ALLOC: cache刚刚分配的group以及start.
  */
 static void ext4_mb_use_best_found(struct ext4_allocation_context *ac,
 					struct ext4_buddy *e4b)
@@ -1868,11 +1901,14 @@ static void ext4_mb_use_best_found(struct ext4_allocation_context *ac,
 	BUG_ON(ac->ac_b_ex.fe_group != e4b->bd_group);
 	BUG_ON(ac->ac_status == AC_STATUS_FOUND);
 
-	/* OyTao: TODO */
+	/* OyTao: b_ex.fe_len可能大于g_ex.fen， 取最小值*/
 	ac->ac_b_ex.fe_len = min(ac->ac_b_ex.fe_len, ac->ac_g_ex.fe_len);
 	ac->ac_b_ex.fe_logical = ac->ac_g_ex.fe_logical;
 
-	/* OyTao:　TODO */
+	/*
+	 * OyTao:对分配的@fe_start -- @fe_len，在group bitmap以及buddy bitmap
+	 * 设置对应的bit
+	 */
 	ret = mb_mark_used(e4b, &ac->ac_b_ex);
 
 	/* preallocation can change ac_b_ex, thus we store actually
@@ -1881,6 +1917,8 @@ static void ext4_mb_use_best_found(struct ext4_allocation_context *ac,
 	ac->ac_f_ex = ac->ac_b_ex;
 
 	ac->ac_status = AC_STATUS_FOUND;
+
+	/* OyTao: TODO */
 	ac->ac_tail = ret & 0xffff;
 	ac->ac_buddy = ret >> 16;
 
@@ -1908,7 +1946,10 @@ static void ext4_mb_use_best_found(struct ext4_allocation_context *ac,
 /*
  * regular allocator, for general purposes allocation
  */
-
+/* OyTao: 检查已经分配的次数,如果超过s_mb_max_to_scan，则设置ac_status
+ * 为AC_STATUS_BREAK, 停止再次scan,但是并不会use best found.
+ * 同时再次检查b_ex,有可能找到了符合的长度。
+ */
 static void ext4_mb_check_limits(struct ext4_allocation_context *ac,
 					struct ext4_buddy *e4b,
 					int finish_group)
@@ -1924,6 +1965,7 @@ static void ext4_mb_check_limits(struct ext4_allocation_context *ac,
 	/*
 	 * We don't want to scan for a whole year
 	 */
+	/* OyTao: found次数的限制 */
 	if (ac->ac_found > sbi->s_mb_max_to_scan &&
 			!(ac->ac_flags & EXT4_MB_HINT_FIRST)) {
 		ac->ac_status = AC_STATUS_BREAK;
@@ -1936,6 +1978,7 @@ static void ext4_mb_check_limits(struct ext4_allocation_context *ac,
 	if (bex->fe_len < gex->fe_len)
 		return;
 
+	/* OyTao: 再次检查b_ex是否可以分配足够的大小 */
 	if ((finish_group || ac->ac_found > sbi->s_mb_min_to_scan)
 			&& bex->fe_group == e4b->bd_group) {
 		/* recheck chunk's availability - we don't know
@@ -1971,6 +2014,7 @@ static void ext4_mb_measure_extent(struct ext4_allocation_context *ac,
 	BUG_ON(ex->fe_start >= EXT4_CLUSTERS_PER_GROUP(ac->ac_sb));
 	BUG_ON(ac->ac_status != AC_STATUS_CONTINUE);
 
+	/* OyTao: */
 	ac->ac_found++;
 
 	/*
@@ -1985,6 +2029,7 @@ static void ext4_mb_measure_extent(struct ext4_allocation_context *ac,
 	/*
 	 * Let's check whether the chuck is good enough
 	 */
+	/* OyTao: 如果已经找到了符合需求的 use_best_found */
 	if (ex->fe_len == gex->fe_len) {
 		*bex = *ex;
 		ext4_mb_use_best_found(ac, e4b);
@@ -1994,6 +2039,7 @@ static void ext4_mb_measure_extent(struct ext4_allocation_context *ac,
 	/*
 	 * If this is first found extent, just store it in the context
 	 */
+	/* OyTao: 第一次找到 extent */
 	if (bex->fe_len == 0) {
 		*bex = *ex;
 		return;
@@ -2002,11 +2048,17 @@ static void ext4_mb_measure_extent(struct ext4_allocation_context *ac,
 	/*
 	 * If new found extent is better, store it in the context
 	 */
+	/*
+	 * OyTao: 在@ac_ben与当前extent找一个长度更合适的，
+	 * 都比需要的小，则选择大的作为best.
+	 * 都比需要的大，选择小的作为best.
+	 */
 	if (bex->fe_len < gex->fe_len) {
 		/* if the request isn't satisfied, any found extent
 		 * larger than previous best one is better */
 		if (ex->fe_len > bex->fe_len)
 			*bex = *ex;
+
 	} else if (ex->fe_len > gex->fe_len) {
 		/* if the request is satisfied, then we try to find
 		 * an extent that still satisfy the request, but is
@@ -2015,9 +2067,11 @@ static void ext4_mb_measure_extent(struct ext4_allocation_context *ac,
 			*bex = *ex;
 	}
 
+	/* OyTao: 检查限制 */
 	ext4_mb_check_limits(ac, e4b, 0);
 }
 
+/* OyTao: 尝试依据在@e4b中去寻找空闲的块，如果寻找到，则best_found  */
 static noinline_for_stack
 int ext4_mb_try_best_found(struct ext4_allocation_context *ac,
 					struct ext4_buddy *e4b)
@@ -2079,10 +2133,11 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 	/* OyTao:尝试按照goal对应的目标start block去分配连续的空间 */
 	max = mb_find_extent(e4b, ac->ac_g_ex.fe_start,
 			     ac->ac_g_ex.fe_len, &ex);
+
 	ex.fe_logical = 0xDEADFA11; /* debug value */
 
 	/* OyTao: Stripe 分配 TODO */
-	/* OyTao: 正常情况下会执行
+	/* OyTao: 如果分配的长度 >= needed
 	 *	ac->ac_found++;
 	 *  ac->ac_b_ex = ex;
 	 *  ext4_mb_use_best_found(ac, e4b);
@@ -2102,6 +2157,7 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 		}
 
 	} else if (max >= ac->ac_g_ex.fe_len) {
+		/* OyTao:分配到了足够的@fen_len */
 		BUG_ON(ex.fe_len <= 0);
 		BUG_ON(ex.fe_group != ac->ac_g_ex.fe_group);
 		BUG_ON(ex.fe_start != ac->ac_g_ex.fe_start);
@@ -2112,6 +2168,7 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 	} else if (max > 0 && (ac->ac_flags & EXT4_MB_HINT_MERGE)) {
 		/* Sometimes, caller may want to merge even small
 		 * number of blocks to an existing extent */
+		/* OyTao: TODO */
 		BUG_ON(ex.fe_len <= 0);
 		BUG_ON(ex.fe_group != ac->ac_g_ex.fe_group);
 		BUG_ON(ex.fe_start != ac->ac_g_ex.fe_start);
@@ -2119,7 +2176,6 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 		ac->ac_found++;
 		ac->ac_b_ex = ex;
 		ext4_mb_use_best_found(ac, e4b);
-
 	}
 
 	ext4_unlock_group(ac->ac_sb, group);
@@ -2131,6 +2187,12 @@ int ext4_mb_find_by_goal(struct ext4_allocation_context *ac,
 /*
  * The routine scans buddy structures (not bitmap!) from given order
  * to max order and tries to find big enough chunk to satisfy the req
+ */
+/*
+ * OyTao: 调用该函数的前提条件：
+ * 1) ac_2order > 0
+ * 2) fe_len是2的幂。ac_2order = fls(fe_len) - 1;
+ * 3) cr = 0
  */
 static noinline_for_stack
 void ext4_mb_simple_scan_group(struct ext4_allocation_context *ac,
@@ -2144,6 +2206,7 @@ void ext4_mb_simple_scan_group(struct ext4_allocation_context *ac,
 	int max;
 
 	BUG_ON(ac->ac_2order <= 0);
+	/* OyTao: 按照ac_2order,扫描更大的order,寻找合适的extent */
 	for (i = ac->ac_2order; i <= sb->s_blocksize_bits + 1; i++) {
 		if (grp->bb_counters[i] == 0)
 			continue;
@@ -2160,8 +2223,10 @@ void ext4_mb_simple_scan_group(struct ext4_allocation_context *ac,
 		ac->ac_b_ex.fe_start = k << i;
 		ac->ac_b_ex.fe_group = e4b->bd_group;
 
+		/* OyTao:  */
 		ext4_mb_use_best_found(ac, e4b);
 
+		/* OyTao: 因为fe_len = 2 ^(ac_2order*/
 		BUG_ON(ac->ac_b_ex.fe_len != ac->ac_g_ex.fe_len);
 
 		if (EXT4_SB(sb)->s_mb_stats)
@@ -2175,6 +2240,12 @@ void ext4_mb_simple_scan_group(struct ext4_allocation_context *ac,
  * The routine scans the group and measures all found extents.
  * In order to optimize scanning, caller must pass number of
  * free blocks in the group, so the routine can know upper limit.
+ */
+/*
+ * OyTao: 扫描group, 从第一个空闲的块开始寻找，一直寻找到刚好长度合适的extent.
+ * 如果寻找的次数 > s_mb_max_scan, 也需要break.
+ *
+ * 在查找到的extent,要找与needed的最匹配的extent. 存入ac_b_ex中。
  */
 static noinline_for_stack
 void ext4_mb_complex_scan_group(struct ext4_allocation_context *ac,
@@ -2192,6 +2263,7 @@ void ext4_mb_complex_scan_group(struct ext4_allocation_context *ac,
 	i = e4b->bd_info->bb_first_free;
 
 	while (free && ac->ac_status == AC_STATUS_CONTINUE) {
+		/* OyTao: 找到第一个空闲的块(cluster unit) */
 		i = mb_find_next_zero_bit(bitmap,
 						EXT4_CLUSTERS_PER_GROUP(sb), i);
 		if (i >= EXT4_CLUSTERS_PER_GROUP(sb)) {
@@ -2207,8 +2279,12 @@ void ext4_mb_complex_scan_group(struct ext4_allocation_context *ac,
 			break;
 		}
 
+		/* OyTao: 
+		 * 从第一个空闲的clusters开始分配, 所以分配得到的长度@fe_len肯定> 0
+		 */
 		mb_find_extent(e4b, i, ac->ac_g_ex.fe_len, &ex);
 		BUG_ON(ex.fe_len <= 0);
+
 		if (free < ex.fe_len) {
 			ext4_grp_locked_error(sb, e4b->bd_group, 0, 0,
 					"%d free clusters as per "
@@ -2221,7 +2297,10 @@ void ext4_mb_complex_scan_group(struct ext4_allocation_context *ac,
 			 */
 			break;
 		}
+
 		ex.fe_logical = 0xDEADC0DE; /* debug value */
+
+		/* OyTao: 检查@ex与@b_ex哪个更好，同时检查是否需要继续scan */
 		ext4_mb_measure_extent(ac, &ex, e4b);
 
 		i += ex.fe_len;
@@ -2278,6 +2357,15 @@ void ext4_mb_scan_aligned(struct ext4_allocation_context *ac,
  * for the allocation or not. In addition it can also return negative
  * error code when something goes wrong.
  */
+/*
+ * OyTao: cr == 0: 是fe_len刚好是2的幂，同时满足大于 >mb_order2_req 
+ *       这种情况下，遍历所有的group，寻找刚好是满足对应的orders.
+ *       cr == 1扫描(free / fragment > fe_len)的groups. 
+ *       cr == 2扫描(free > fe_len)的所有的groups.Stripe TODO)
+ *       cr = 3 扫描所有的groups.
+ *
+ * 该函数，根据cr判断当前group是否需要扫描。
+ */
 static int ext4_mb_good_group(struct ext4_allocation_context *ac,
 				ext4_group_t group, int cr)
 {
@@ -2312,11 +2400,13 @@ static int ext4_mb_good_group(struct ext4_allocation_context *ac,
 		BUG_ON(ac->ac_2order == 0);
 
 		/* Avoid using the first bg of a flexgroup for data files */
+		/* OyTao: TODO */
 		if ((ac->ac_flags & EXT4_MB_HINT_DATA) &&
 		    (flex_size >= EXT4_FLEX_SIZE_DIR_ALLOC_SCHEME) &&
 		    ((group % flex_size) == 0))
 			return 0;
 
+		/* OyTao: 足够分配 free/fragments >= @fe_len */
 		if ((ac->ac_2order > ac->ac_sb->s_blocksize_bits+1) ||
 		    (free / fragments) >= ac->ac_g_ex.fe_len)
 			return 1;
@@ -2325,14 +2415,18 @@ static int ext4_mb_good_group(struct ext4_allocation_context *ac,
 			return 0;
 
 		return 1;
+
 	case 1:
+		/* OyTao: */
 		if ((free / fragments) >= ac->ac_g_ex.fe_len)
 			return 1;
 		break;
+
 	case 2:
 		if (free >= ac->ac_g_ex.fe_len)
 			return 1;
 		break;
+
 	case 3:
 		return 1;
 	default:
@@ -2364,6 +2458,7 @@ ext4_mb_regular_allocator(struct ext4_allocation_context *ac)
 	BUG_ON(ac->ac_status == AC_STATUS_FOUND);
 
 	/* first, try the goal */
+	/* OyTao: 尝试按照ac_g_ex中的goal physcial block去分配 */
 	err = ext4_mb_find_by_goal(ac, &e4b);
 	if (err || ac->ac_status == AC_STATUS_FOUND)
 		goto out;
@@ -2387,11 +2482,16 @@ ext4_mb_regular_allocator(struct ext4_allocation_context *ac)
 		/*
 		 * This should tell if fe_len is exactly power of 2
 		 */
+		/*
+		 * OyTao: 如果@fe_len刚好是2的幂的倍数，则赋值给@ac_2order,
+		 * 否则ac_2order = 0
+		 */
 		if ((ac->ac_g_ex.fe_len & (~(1 << (i - 1)))) == 0)
 			ac->ac_2order = i - 1;
 	}
 
 	/* if stream allocation is enabled, use global goal */
+	/* OyTao: 对于stream allocation，设置cache的global goal为goal extent  */
 	if (ac->ac_flags & EXT4_MB_STREAM_ALLOC) {
 		/* TBD: may be hot point */
 		spin_lock(&sbi->s_md_lock);
@@ -2402,11 +2502,20 @@ ext4_mb_regular_allocator(struct ext4_allocation_context *ac)
 
 	/* Let's just scan groups to find more-less suitable blocks */
 	cr = ac->ac_2order ? 0 : 1;
+
 	/*
 	 * cr == 0 try to get exact allocation,
 	 * cr == 3  try to get anything
 	 */
+	/*
+	 * OyTao: cr == 0: 是fe_len刚好是2的幂，同时满足大于 >mb_order2_req 
+	 *       这种情况下，遍历所有的group，寻找刚好是满足对应的orders.
+	 *       cr == 1扫描(free / fragment > fe_len)的groups. 
+	 *       cr == 2扫描(free > fe_len)的所有的groups.Stripe TODO)
+	 *       cr = 3 扫描所有的groups.
+	 */
 repeat:
+	/* OyTao: */
 	for (; cr < 4 && ac->ac_status == AC_STATUS_CONTINUE; cr++) {
 		ac->ac_criteria = cr;
 		/*
@@ -2415,6 +2524,7 @@ repeat:
 		 */
 		group = ac->ac_g_ex.fe_group;
 
+		/* OyTao: 从当前group开始遍历所有的groups, 尝试分配连续的 */
 		for (i = 0; i < ngroups; group++, i++) {
 			int ret = 0;
 			cond_resched();
@@ -2433,16 +2543,19 @@ repeat:
 				continue;
 			}
 
+			/* OyTao: 获取@group对应的group bitmap以及buddy info */
 			err = ext4_mb_load_buddy(sb, group, &e4b);
 			if (err)
 				goto out;
 
+			/* OyTao: */
 			ext4_lock_group(sb, group);
 
 			/*
 			 * We need to check again after locking the
 			 * block group
 			 */
+			/* OyTao: check again */
 			ret = ext4_mb_good_group(ac, group, cr);
 			if (ret <= 0) {
 				ext4_unlock_group(sb, group);
@@ -2454,11 +2567,16 @@ repeat:
 
 			ac->ac_groups_scanned++;
 			if (cr == 0 && ac->ac_2order < sb->s_blocksize_bits+2)
+			  /* OyTao: 扫描group,找到合适的order */
 				ext4_mb_simple_scan_group(ac, &e4b);
+
 			else if (cr == 1 && sbi->s_stripe &&
 					!(ac->ac_g_ex.fe_len % sbi->s_stripe))
+				/* OyTao: stripe-aligned TODO */
 				ext4_mb_scan_aligned(ac, &e4b);
+
 			else
+			  /* OyTao: 扫描整个group，寻找合适的extent */
 				ext4_mb_complex_scan_group(ac, &e4b);
 
 			ext4_unlock_group(sb, group);
@@ -2476,6 +2594,11 @@ repeat:
 		 * the best chunk we've found so far
 		 */
 
+		/* 
+		 * OyTao: ac_status 有可能等于AC_STATUS_BREAK， 
+		 * 或者是并没有找到完全匹配长度的ex, 此时，因为已经寻找很多次，
+		 * 只要寻找可用空间，use best found.
+		 */
 		ext4_mb_try_best_found(ac, &e4b);
 		if (ac->ac_status != AC_STATUS_FOUND) {
 			/*
@@ -2483,6 +2606,10 @@ repeat:
 			 * The only thing we can do is just take first
 			 * found block(s)
 			printk(KERN_DEBUG "EXT4-fs: someone won our chunk\n");
+			 */
+			/*
+			 * OyTao: 如果此时还没有分配得到空闲空间。设置HINT_FIRST.
+			 * 只要寻找到空闲空间，use best found.
 			 */
 			ac->ac_b_ex.fe_group = 0;
 			ac->ac_b_ex.fe_start = 0;
@@ -2494,6 +2621,7 @@ repeat:
 			goto repeat;
 		}
 	}
+
 out:
 	if (!err && ac->ac_status != AC_STATUS_FOUND && first_err)
 		err = first_err;
