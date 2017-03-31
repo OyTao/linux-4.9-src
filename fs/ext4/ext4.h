@@ -3008,7 +3008,7 @@ struct ext4_group_info {
 
 	ext4_grpblk_t	bb_largest_free_order;/* order of largest frag in BG */
 
-	/* OyTao: TODO */
+	/* OyTao: 用作异常处理，如果分配了new PA, 但是后续出错，需要处理PA */
 	struct          list_head bb_prealloc_list;
 
 #ifdef DOUBLE_CHECK

@@ -678,7 +678,7 @@ struct ext2_inode_info {
 	 * near to their parent directory's inode.
 	 */
 	/*
-	 * OyTao: inode锁在的block group,数据通常与inode在同一个block group,
+	 * OyTao: inode在的block group,数据通常与inode在同一个block group,
 	 * 或者挨着.
 	 */
 	__u32	i_block_group;

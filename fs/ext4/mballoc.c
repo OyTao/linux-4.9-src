@@ -1529,6 +1529,18 @@ void ext4_set_bits(void *bm, int cur, int len)
 /*
  * _________________________________________________________________ */
 
+/*
+ * OyTao:
+ *
+ * 当前bit是set,但是需要clear的。
+ * 如果bit + side free，则可以可以将side合并，向更大的order。但是当前的bb_count
+ * 需要-1.  因为可以合并，所以需要先将*bit + side设置上。同时*bit范围要扩大。
+ * *bit = *bit + side.
+ *
+ * 如果 bit + side no free, 则表示无法合并。则需要将当前的bit clear.
+ * 同时*bit需要往后退，*bit = *bit - side.
+ *
+ */
 static inline int mb_buddy_adjust_border(int* bit, void* bitmap, int side)
 {
 	if (mb_test_bit(*bit + side, bitmap)) {
@@ -1580,26 +1592,42 @@ static void mb_buddy_mark_free(struct ext4_buddy *e4b, int first, int last)
 		 * Then shift range to [0; 2], go up and do the same.
 		 */
 
-
+		/* OyTao: 考虑奇数 first的left bit */
 		if (first & 1)
 			e4b->bd_info->bb_counters[order] += mb_buddy_adjust_border(&first, buddy, -1);
+
+		/* OyTao: 考虑偶数 last的right bit */
 		if (!(last & 1))
 			e4b->bd_info->bb_counters[order] += mb_buddy_adjust_border(&last, buddy, 1);
+
 		if (first > last)
 			break;
+
+		/* 考虑向更高的order 合并 */
 		order++;
 
+		/*
+		 * OyTao: 如果经过adjust border, first == last，则表示在同一个order段，
+		 * 所以可以结束。clear对应的区域（first, 1)
+		 * 同时需要对于他们所在的order，bb_counters[order] + 1.
+		 * 因为上面order已经++，所以是bb_counters[order - 1] + 1;
+		 */
 		if (first == last || !(buddy2 = mb_find_buddy(e4b, order, &max))) {
 			mb_clear_bits(buddy, first, last - first + 1);
 			e4b->bd_info->bb_counters[order - 1] += last - first + 1;
 			break;
 		}
+		
+		/*
+		 * OyTao: 如果first与last不等，则继续向更大的order合并。。
+		 */
 		first >>= 1;
 		last >>= 1;
 		buddy = buddy2;
 	}
 }
 
+/* OyTao: 释放从buddy cache中分配的blocks */
 static void mb_free_blocks(struct inode *inode, struct ext4_buddy *e4b,
 			   int first, int count)
 {
@@ -1612,15 +1640,19 @@ static void mb_free_blocks(struct inode *inode, struct ext4_buddy *e4b,
 	if (WARN_ON(count == 0))
 		return;
 	BUG_ON(last >= (sb->s_blocksize << 3));
+
 	assert_spin_locked(ext4_group_lock_ptr(sb, e4b->bd_group));
 	/* Don't bother if the block group is corrupt. */
 	if (unlikely(EXT4_MB_GRP_BBITMAP_CORRUPT(e4b->bd_info)))
 		return;
 
 	mb_check_buddy(e4b);
+
+	/* OyTao: double check TODO */
 	mb_free_blocks_double(inode, e4b, first, count);
 
 	e4b->bd_info->bb_free += count;
+
 	if (first < e4b->bd_info->bb_first_free)
 		e4b->bd_info->bb_first_free = first;
 
@@ -1629,7 +1661,10 @@ static void mb_free_blocks(struct inode *inode, struct ext4_buddy *e4b,
 	 */
 	if (first != 0)
 		left_is_free = !mb_test_bit(first - 1, e4b->bd_bitmap);
+
+	/* OyTao: 在group bitmap上clear bits. (first, first + count) */
 	block = mb_test_and_clear_bits(e4b->bd_bitmap, first, count);
+
 	if (last + 1 < EXT4_SB(sb)->s_mb_maxs[0])
 		right_is_free = !mb_test_bit(last + 1, e4b->bd_bitmap);
 
@@ -1651,6 +1686,7 @@ static void mb_free_blocks(struct inode *inode, struct ext4_buddy *e4b,
 		/* Mark the block group as corrupt. */
 		set_bit(EXT4_GROUP_INFO_BBITMAP_CORRUPT_BIT,
 			&e4b->bd_info->bb_state);
+
 		mb_regenerate_buddy(e4b);
 		goto done;
 	}
@@ -1666,6 +1702,17 @@ static void mb_free_blocks(struct inode *inode, struct ext4_buddy *e4b,
 	 * zero order checks.
 	 * Check if neighbours are to be coaleasced,
 	 * adjust bitmap bb_counters and borders appropriately.
+	 */
+	/*
+	 * OyTao:
+	 * 如果first是奇数，考虑左边的left是否是free,
+	 *  如果free，则可以合并成order = 1,当时当前的bb_count[0] 需要减一(left，要从
+	 *  order0 --> order1 ）,first不变化。
+	 *
+	 *  如果no free,则不可以合并,则bb[count] + 1. first = first + 1;
+	 * 
+	 * 如果last是偶数，则需要考虑右边right是否free.
+	 * case同上。
 	 */
 	if (first & 1) {
 		first += !left_is_free;
@@ -3407,6 +3454,7 @@ ext4_mb_mark_diskspace_used(struct ext4_allocation_context *ac,
 	}
 
 	ext4_lock_group(sb, ac->ac_b_ex.fe_group);
+
 #ifdef AGGRESSIVE_CHECK
 	{
 		int i;
@@ -3416,8 +3464,10 @@ ext4_mb_mark_diskspace_used(struct ext4_allocation_context *ac,
 		}
 	}
 #endif
+
 	ext4_set_bits(bitmap_bh->b_data, ac->ac_b_ex.fe_start,
 		      ac->ac_b_ex.fe_len);
+
 	if (gdp->bg_flags & cpu_to_le16(EXT4_BG_BLOCK_UNINIT)) {
 		gdp->bg_flags &= cpu_to_le16(~EXT4_BG_BLOCK_UNINIT);
 		ext4_free_group_clusters_set(sb, gdp,
@@ -3447,8 +3497,10 @@ ext4_mb_mark_diskspace_used(struct ext4_allocation_context *ac,
 	}
 
 	err = ext4_handle_dirty_metadata(handle, NULL, bitmap_bh);
+
 	if (err)
 		goto out_err;
+
 	err = ext4_handle_dirty_metadata(handle, NULL, gdp_bh);
 
 out_err:
@@ -3765,6 +3817,11 @@ static void ext4_mb_collect_stats(struct ext4_allocation_context *ac)
  * pa_free in ext4_mb_release_context(), but on failure, we've already
  * zeroed out ac->ac_b_ex.fe_len, so group_pa->pa_free is not changed.
  */
+/*
+ * OyTao:
+ * 因为group pa的pa_free是在ext4_mb_release_context中修改的，此时还没有修改
+ * pa_free,所以不用处理group pa.
+ */
 static void ext4_discard_allocated_blocks(struct ext4_allocation_context *ac)
 {
 	struct ext4_prealloc_space *pa = ac->ac_pa;
@@ -3774,6 +3831,7 @@ static void ext4_discard_allocated_blocks(struct ext4_allocation_context *ac)
 	if (pa == NULL) {
 		if (ac->ac_f_ex.fe_len == 0)
 			return;
+
 		err = ext4_mb_load_buddy(ac->ac_sb, ac->ac_f_ex.fe_group, &e4b);
 		if (err) {
 			/*
@@ -3784,13 +3842,17 @@ static void ext4_discard_allocated_blocks(struct ext4_allocation_context *ac)
 			WARN(1, "mb_load_buddy failed (%d)", err);
 			return;
 		}
+
 		ext4_lock_group(ac->ac_sb, ac->ac_f_ex.fe_group);
 		mb_free_blocks(ac->ac_inode, &e4b, ac->ac_f_ex.fe_start,
 			       ac->ac_f_ex.fe_len);
 		ext4_unlock_group(ac->ac_sb, ac->ac_f_ex.fe_group);
+
 		ext4_mb_unload_buddy(&e4b);
+
 		return;
 	}
+
 	if (pa->pa_type == MB_INODE_PA)
 		pa->pa_free += ac->ac_b_ex.fe_len;
 }
@@ -3845,7 +3907,7 @@ static void ext4_mb_use_inode_pa(struct ext4_allocation_context *ac,
  * use blocks preallocated to locality group
  */
 /*
- * OyTao: 从per-cpu group prealloc中分配.
+ * OyTao: 从per-cpu group prealloc中分配. 会更新ac_b_ex中的fe.len
  */
 static void ext4_mb_use_group_pa(struct ext4_allocation_context *ac,
 				struct ext4_prealloc_space *pa)
@@ -4103,6 +4165,11 @@ static void ext4_mb_put_pa(struct ext4_allocation_context *ac,
 
 	/* in this short window concurrent discard can set pa_deleted */
 	spin_lock(&pa->pa_lock);
+
+	/*
+	 * OyTao： 
+	 * pa_count初始化为1. 使用一次 pa_count++
+	 */
 	if (!atomic_dec_and_test(&pa->pa_count) || pa->pa_free != 0) {
 		spin_unlock(&pa->pa_lock);
 		return;
@@ -4120,6 +4187,11 @@ static void ext4_mb_put_pa(struct ext4_allocation_context *ac,
 	/*
 	 * If doing group-based preallocation, pa_pstart may be in the
 	 * next group when pa is used up
+	 */
+	/*
+	 * OyTao: 在ext4_mb_release_context中已经pa->pa_pstart += fe_len,
+	 * 所以对于per-cpu group preallocation，要确定上次分配的group,
+	 * 通过pa_pstart-- 去确定group.
 	 */
 	if (pa->pa_type == MB_GROUP_PA)
 		grp_blk--;
@@ -4154,6 +4226,7 @@ static void ext4_mb_put_pa(struct ext4_allocation_context *ac,
 /*
  * creates new preallocated space for given inode
  */
+/* OyTao: 从buddy cache中分配的空间大于需要的，创建新的inode pa */
 static noinline_for_stack int
 ext4_mb_new_inode_pa(struct ext4_allocation_context *ac)
 {
@@ -4172,11 +4245,44 @@ ext4_mb_new_inode_pa(struct ext4_allocation_context *ac)
 	if (pa == NULL)
 		return -ENOMEM;
 
+	/* OyTao: 修正分配的fe_logical */
 	if (ac->ac_b_ex.fe_len < ac->ac_g_ex.fe_len) {
 		int winl;
 		int wins;
 		int win;
 		int offs;
+
+		/* OyTao: 因为分配的长度大于需求的长度。ac_b_ex.fe_len > ac_o_ex.fe_len
+		 * ac_b_ex.fe_logical == ac_g_ex.fe_logical;
+		 *
+		 * wins = ac_b_ex.fe_end - ac_b_ex.fe_logical - ac_o_ex.fe_led + ac_o_ex.fe_logcal
+		 *      = ac_o_ex.fe_logical - ac_b_ex.fe_logical + ac_b_ex.fe_end - ac_o_ex.fe_len
+		 *      = winl + ac_b_ex.fe_end - ac_o_ex.fe_end
+		 *
+		 * case 1:如果ac_be_ex.fe_end > ac_o_ex.fe_end
+		 *   ac_b_ex  | ------------------------- |
+		 *   ac_o_ex       | ---------------｜
+		 *            ===== (winl)
+		 *
+		 * min(winl, wins) =  winl
+		 * 修正后：
+		 * ac_b_ex  | ---------------------- |
+		 * ac_o_ex  | ----------------- |
+		 *
+		 *
+		 * case 2: 如果ac_be_ex.fe_end < ac_o_ex.fe_end
+		 * ac_b_ex  | -------------------- |
+		 * ac_o_ex        | ----------------------|
+		 *
+		 * min(winl, wins) =  wins
+		 * 修正后：
+		 * ac_b_ex  | ---------------------- |
+		 * ac_o_ex       | ----------------- |
+		 *          ***** wins
+		 *
+		 * TODO offset:
+		 * 使fe_logical尽可能是fe_len的倍数
+		 */
 
 		/* we can't allocate as much as normalizer wants.
 		 * so, found space must get proper lstart
@@ -4200,8 +4306,10 @@ ext4_mb_new_inode_pa(struct ext4_allocation_context *ac)
 		if (offs && offs < win)
 			win = offs;
 
+		/* OyTao: 修正fe_logical */
 		ac->ac_b_ex.fe_logical = ac->ac_o_ex.fe_logical -
 			EXT4_NUM_B2C(sbi, win);
+
 		BUG_ON(ac->ac_o_ex.fe_logical < ac->ac_b_ex.fe_logical);
 		BUG_ON(ac->ac_o_ex.fe_len > ac->ac_b_ex.fe_len);
 	}
@@ -4225,6 +4333,7 @@ ext4_mb_new_inode_pa(struct ext4_allocation_context *ac)
 			pa->pa_pstart, pa->pa_len, pa->pa_lstart);
 	trace_ext4_mb_new_inode_pa(ac, pa);
 
+	/* OyTao: mark PAs */
 	ext4_mb_use_inode_pa(ac, pa);
 	atomic_add(pa->pa_free, &sbi->s_mb_preallocated);
 
@@ -4234,10 +4343,12 @@ ext4_mb_new_inode_pa(struct ext4_allocation_context *ac)
 	pa->pa_obj_lock = &ei->i_prealloc_lock;
 	pa->pa_inode = ac->ac_inode;
 
+	/* OyTao: 将新创建的inode PA链入到group->bb_prealloc_list */
 	ext4_lock_group(sb, ac->ac_b_ex.fe_group);
 	list_add(&pa->pa_group_list, &grp->bb_prealloc_list);
 	ext4_unlock_group(sb, ac->ac_b_ex.fe_group);
 
+	/* OyTao: 将new inode PA 加入inode rcu list */
 	spin_lock(pa->pa_obj_lock);
 	list_add_rcu(&pa->pa_inode_list, &ei->i_prealloc_list);
 	spin_unlock(pa->pa_obj_lock);
@@ -4268,6 +4379,7 @@ ext4_mb_new_group_pa(struct ext4_allocation_context *ac)
 
 	/* preallocation can change ac_b_ex, thus we store actually
 	 * allocated blocks for history */
+	/* OyTao: 在ext4_mb_use_group_pa中会更新ac_b_ex中的fe_len */
 	ac->ac_f_ex = ac->ac_b_ex;
 
 	pa->pa_pstart = ext4_grp_offs_to_block(sb, &ac->ac_b_ex);
@@ -4285,7 +4397,12 @@ ext4_mb_new_group_pa(struct ext4_allocation_context *ac)
 			pa->pa_pstart, pa->pa_len, pa->pa_lstart);
 	trace_ext4_mb_new_group_pa(ac, pa);
 
+	/*
+	 * OyTao: 从group PA 中分配，但是pa的free,pstart都没有更改，会在
+	 * ext4_mb_release_context中修改，此时还在lg_mutex的锁范围内
+	 */
 	ext4_mb_use_group_pa(ac, pa);
+
 	atomic_add(pa->pa_free, &EXT4_SB(sb)->s_mb_preallocated);
 
 	grp = ext4_get_group_info(sb, ac->ac_b_ex.fe_group);
@@ -4295,10 +4412,12 @@ ext4_mb_new_group_pa(struct ext4_allocation_context *ac)
 	pa->pa_obj_lock = &lg->lg_prealloc_lock;
 	pa->pa_inode = NULL;
 
+	/* OyTao:　加入到group的bb_prealloc_list中， 与inode PA一致 */
 	ext4_lock_group(sb, ac->ac_b_ex.fe_group);
 	list_add(&pa->pa_group_list, &grp->bb_prealloc_list);
 	ext4_unlock_group(sb, ac->ac_b_ex.fe_group);
 
+	/* OyTao: group还没有加入到lg中对应的order rcu链表中 */
 	/*
 	 * We will later add the new pa to the right bucket
 	 * after updating the pa_free in ext4_mb_release_context
@@ -4306,6 +4425,10 @@ ext4_mb_new_group_pa(struct ext4_allocation_context *ac)
 	return 0;
 }
 
+/* 
+ * OyTao: 如果当前ac是可以在group PA中分配的话，则创建group PA。
+ * 否则创建inode PA.
+ */
 static int ext4_mb_new_preallocation(struct ext4_allocation_context *ac)
 {
 	int err;
@@ -4324,6 +4447,9 @@ static int ext4_mb_new_preallocation(struct ext4_allocation_context *ac)
  * nobody else can find/use it.
  * the caller MUST hold group/inode locks.
  * TODO: optimize the case when there are no in-core structures yet
+ */
+/*
+ * OyTao: 释放inode pa.
  */
 static noinline_for_stack int
 ext4_mb_release_inode_pa(struct ext4_buddy *e4b, struct buffer_head *bitmap_bh,
@@ -4346,6 +4472,7 @@ ext4_mb_release_inode_pa(struct ext4_buddy *e4b, struct buffer_head *bitmap_bh,
 	end = bit + pa->pa_len;
 
 	while (bit < end) {
+		/* OyTao: (bit, next-bit)局域是可以clear，可以释放回去buddy cache */
 		bit = mb_find_next_zero_bit(bitmap_bh->b_data, end, bit);
 		if (bit >= end)
 			break;
@@ -4359,9 +4486,12 @@ ext4_mb_release_inode_pa(struct ext4_buddy *e4b, struct buffer_head *bitmap_bh,
 		trace_ext4_mb_release_inode_pa(pa, (grp_blk_start +
 						    EXT4_C2B(sbi, bit)),
 					       next - bit);
+
 		mb_free_blocks(pa->pa_inode, e4b, bit, next - bit);
 		bit = next + 1;
 	}
+
+	/* OyTao: check */
 	if (free != pa->pa_free) {
 		ext4_msg(e4b->bd_sb, KERN_CRIT,
 			 "pa %p: logic %lu, phys. %lu, len %lu",
@@ -4375,11 +4505,13 @@ ext4_mb_release_inode_pa(struct ext4_buddy *e4b, struct buffer_head *bitmap_bh,
 		 * from the bitmap and continue.
 		 */
 	}
+
 	atomic_add(free, &sbi->s_mb_discarded);
 
 	return err;
 }
 
+/* OyTao: 释放group PA  */
 static noinline_for_stack int
 ext4_mb_release_group_pa(struct ext4_buddy *e4b,
 				struct ext4_prealloc_space *pa)
@@ -4392,6 +4524,7 @@ ext4_mb_release_group_pa(struct ext4_buddy *e4b,
 	BUG_ON(pa->pa_deleted == 0);
 	ext4_get_group_no_and_offset(sb, pa->pa_pstart, &group, &bit);
 	BUG_ON(group != e4b->bd_group && pa->pa_len != 0);
+	/* OyTao: 释放blocks */
 	mb_free_blocks(pa->pa_inode, e4b, bit, pa->pa_len);
 	atomic_add(pa->pa_len, &EXT4_SB(sb)->s_mb_discarded);
 	trace_ext4_mballoc_discard(sb, NULL, group, bit, pa->pa_len);
@@ -4792,6 +4925,7 @@ ext4_mb_initialize_context(struct ext4_allocation_context *ac,
 	 * OyTao: ar->logical在ext4_ext_map_blocks中，
 	 * 或者其他地方调用ext4_mb_new_blocks的时候，会初始化。
 	 * 对应着在inode中logical block.
+	 * fe_logical:cluster对齐。
 	 */
 	ac->ac_b_ex.fe_logical = EXT4_LBLK_CMASK(sbi, ar->logical);
 
@@ -4844,6 +4978,8 @@ ext4_mb_discard_lg_preallocations(struct super_block *sb,
 	list_for_each_entry_rcu(pa, &lg->lg_prealloc_list[order],
 						pa_inode_list) {
 		spin_lock(&pa->pa_lock);
+
+		/* OyTao；正被使用 */
 		if (atomic_read(&pa->pa_count)) {
 			/*
 			 * This is the pa that we just used
@@ -4861,9 +4997,11 @@ ext4_mb_discard_lg_preallocations(struct super_block *sb,
 		BUG_ON(pa->pa_type != MB_GROUP_PA);
 
 		/* seems this one can be freed ... */
+		/* OyTao: 设置pa可以删除 */
 		pa->pa_deleted = 1;
 		spin_unlock(&pa->pa_lock);
 
+		/* OyTao: PA从inode list中删除，加入到临时的discard_list中 */
 		list_del_rcu(&pa->pa_inode_list);
 		list_add(&pa->u.pa_tmp_list, &discard_list);
 
@@ -4880,6 +5018,7 @@ ext4_mb_discard_lg_preallocations(struct super_block *sb,
 	}
 	spin_unlock(&lg->lg_prealloc_lock);
 
+	/* OyTao: 处理 discard_list上的PA */
 	list_for_each_entry_safe(pa, tmp, &discard_list, u.pa_tmp_list) {
 
 		group = ext4_get_group_number(sb, pa->pa_pstart);
@@ -4888,6 +5027,7 @@ ext4_mb_discard_lg_preallocations(struct super_block *sb,
 					group);
 			continue;
 		}
+		/* OyTao: group PA从对应的group上删除 */
 		ext4_lock_group(sb, group);
 		list_del(&pa->pa_group_list);
 		ext4_mb_release_group_pa(&e4b, pa);
@@ -4919,15 +5059,20 @@ static void ext4_mb_add_n_trim(struct ext4_allocation_context *ac)
 	if (order > PREALLOC_TB_SIZE - 1)
 		/* The max size of hash table is PREALLOC_TB_SIZE */
 		order = PREALLOC_TB_SIZE - 1;
+
 	/* Add the prealloc space to lg */
+	/* OyTao: 将group PA加入对应的order 数组链表中 */
 	spin_lock(&lg->lg_prealloc_lock);
 	list_for_each_entry_rcu(tmp_pa, &lg->lg_prealloc_list[order],
 						pa_inode_list) {
+
 		spin_lock(&tmp_pa->pa_lock);
+
 		if (tmp_pa->pa_deleted) {
 			spin_unlock(&tmp_pa->pa_lock);
 			continue;
 		}
+
 		if (!added && pa->pa_free < tmp_pa->pa_free) {
 			/* Add to the tail of the previous entry */
 			list_add_tail_rcu(&pa->pa_inode_list,
@@ -4938,15 +5083,19 @@ static void ext4_mb_add_n_trim(struct ext4_allocation_context *ac)
 			 * number of entries in the list
 			 */
 		}
+
 		spin_unlock(&tmp_pa->pa_lock);
+
 		lg_prealloc_count++;
 	}
+
 	if (!added)
 		list_add_tail_rcu(&pa->pa_inode_list,
 					&lg->lg_prealloc_list[order]);
 	spin_unlock(&lg->lg_prealloc_lock);
 
 	/* Now trim the list to be not more than 8 elements */
+	/* OyTao: 如果order对应的链表数目 > 8,需要trim */
 	if (lg_prealloc_count > 8) {
 		ext4_mb_discard_lg_preallocations(sb, lg,
 						  order, lg_prealloc_count);
@@ -4965,6 +5114,7 @@ static int ext4_mb_release_context(struct ext4_allocation_context *ac)
 	if (pa) {
 		if (pa->pa_type == MB_GROUP_PA) {
 			/* see comment in ext4_mb_use_group_pa() */
+			/* OyTao: 目前还在lg_mutex锁的范围内，此时更新分配出去的 */
 			spin_lock(&pa->pa_lock);
 			pa->pa_pstart += EXT4_C2B(sbi, ac->ac_b_ex.fe_len);
 			pa->pa_lstart += EXT4_C2B(sbi, ac->ac_b_ex.fe_len);
@@ -4973,6 +5123,7 @@ static int ext4_mb_release_context(struct ext4_allocation_context *ac)
 			spin_unlock(&pa->pa_lock);
 		}
 	}
+
 	if (pa) {
 		/*
 		 * We want to add the pa to the right bucket.
@@ -4984,16 +5135,22 @@ static int ext4_mb_release_context(struct ext4_allocation_context *ac)
 			spin_lock(pa->pa_obj_lock);
 			list_del_rcu(&pa->pa_inode_list);
 			spin_unlock(pa->pa_obj_lock);
+
 			ext4_mb_add_n_trim(ac);
 		}
+
+		/* OyTao: 如果pa_free ==  0,需要delete. */
 		ext4_mb_put_pa(ac, ac->ac_sb, pa);
 	}
+
 	if (ac->ac_bitmap_page)
 		put_page(ac->ac_bitmap_page);
 	if (ac->ac_buddy_page)
 		put_page(ac->ac_buddy_page);
+
 	if (ac->ac_flags & EXT4_MB_HINT_GROUP_ALLOC)
 		mutex_unlock(&ac->ac_lg->lg_mutex);
+
 	ext4_mb_collect_stats(ac);
 	return 0;
 }
@@ -5019,6 +5176,7 @@ static int ext4_mb_discard_preallocations(struct super_block *sb, int needed)
  * it tries to use preallocation first, then falls back
  * to usual allocation
  */
+/* OyTao: 分配的单位是clusters */
 ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 				struct ext4_allocation_request *ar, int *errp)
 {
@@ -5097,6 +5255,8 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 
 	/* OyTao: 初始化ext4_allocation_request @ac,
 	 * 主要是ac_o_ex(ext4_free_extent), ac_lg(ext4_locality_group)以及ac_flags等。
+	 *
+     * ext4_mb_group_or_file(ac);
 	 */ 
 	*errp = ext4_mb_initialize_context(ac, ar);
 	if (*errp) {
@@ -5106,12 +5266,16 @@ ext4_fsblk_t ext4_mb_new_blocks(handle_t *handle,
 
 	ac->ac_op = EXT4_MB_HISTORY_PREALLOC;
 
+	/* OyTao: 从inode PA以及group PA中分配 */
 	if (!ext4_mb_use_preallocated(ac)) {
+
 		ac->ac_op = EXT4_MB_HISTORY_ALLOC;
+		/* OyTao: 一致化请求 */
 		ext4_mb_normalize_request(ac, ar);
 
 repeat:
 		/* allocate space in core */
+		/* OyTao: 从buddy cache中分配 */
 		*errp = ext4_mb_regular_allocator(ac);
 		if (*errp)
 			goto discard_and_exit;
@@ -5121,8 +5285,9 @@ repeat:
 		 * space in a special descriptor */
 		if (ac->ac_status == AC_STATUS_FOUND &&
 		    ac->ac_o_ex.fe_len < ac->ac_b_ex.fe_len)
-
+		   /* OyTao:从buddy cache中分配的空间大于需求的空间，创建新的PA */
 			*errp = ext4_mb_new_preallocation(ac);
+
 		if (*errp) {
 		discard_and_exit:
 			ext4_discard_allocated_blocks(ac);
@@ -5131,12 +5296,13 @@ repeat:
 	}
 
 	if (likely(ac->ac_status == AC_STATUS_FOUND)) {
+		/* OyTao: TODO */
 		*errp = ext4_mb_mark_diskspace_used(ac, handle, reserv_clstrs);
 		if (*errp) {
 			ext4_discard_allocated_blocks(ac);
 			goto errout;
 		} else {
-
+			/* OyTao: 设置分配的长度 */
 			block = ext4_grp_offs_to_block(sb, &ac->ac_b_ex);
 			ar->len = ac->ac_b_ex.fe_len;
 		}
@@ -5153,6 +5319,8 @@ errout:
 		ar->len = 0;
 		ext4_mb_show_ac(ac);
 	}
+
+	/* OyTao：会对group PA进行特殊处理, 同时put_pa */
 	ext4_mb_release_context(ac);
 
 out:
@@ -5160,6 +5328,7 @@ out:
 		kmem_cache_free(ext4_ac_cachep, ac);
 	if (inquota && ar->len < inquota)
 		dquot_free_block(ar->inode, EXT4_C2B(sbi, inquota - ar->len));
+
 	if (!ar->len) {
 		if ((ar->flags & EXT4_MB_DELALLOC_RESERVED) == 0)
 			/* release all the reserved blocks if non delalloc */

@@ -205,6 +205,7 @@ int ext4_data_block_valid(struct ext4_sb_info *sbi, ext4_fsblk_t start_blk,
 		sbi->s_es->s_last_error_block = cpu_to_le64(start_blk);
 		return 0;
 	}
+
 	while (n) {
 		entry = rb_entry(n, struct ext4_system_zone, node);
 		if (start_blk + count - 1 < entry->start_blk)
@@ -216,6 +217,7 @@ int ext4_data_block_valid(struct ext4_sb_info *sbi, ext4_fsblk_t start_blk,
 			return 0;
 		}
 	}
+
 	return 1;
 }
 
