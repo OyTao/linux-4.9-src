@@ -20,8 +20,10 @@
  * OyTao: buffer head的状态。
  */
 enum bh_state_bits {
+
 	/* OyTao: 缓冲区包含有最新的数据 */
 	BH_Uptodate,	/* Contains valid data */
+
 	/* OyTao：缓冲区中有数据需要回写到磁盘上 */
 	BH_Dirty,	/* Is dirty */
 	/* OyTao: 在缓冲区进行磁盘数据传输时候，需要加lock */

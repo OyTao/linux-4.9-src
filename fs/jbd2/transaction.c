@@ -344,13 +344,18 @@ repeat:
 		read_unlock(&journal->j_state_lock);
 		if (!new_transaction)
 			goto alloc_transaction;
+
 		write_lock(&journal->j_state_lock);
+
+    /* OyTao: 初始化@new_transaction, 同时将@new_transaction与journal关联起来,
+     * 设置j_running_transaction = @new_transaction */
 		if (!journal->j_running_transaction &&
 		    (handle->h_reserved || !journal->j_barrier_count)) {
 			jbd2_get_transaction(journal, new_transaction);
 			new_transaction = NULL;
 		}
 		write_unlock(&journal->j_state_lock);
+
 		goto repeat;
 	}
 
@@ -379,10 +384,12 @@ repeat:
 	handle->h_start_jiffies = jiffies;
 	atomic_inc(&transaction->t_updates);
 	atomic_inc(&transaction->t_handle_count);
+
 	jbd_debug(4, "Handle %p given %d credits (total %d, free %lu)\n",
 		  handle, blocks,
 		  atomic_read(&transaction->t_outstanding_credits),
 		  jbd2_log_space_left(journal));
+
 	read_unlock(&journal->j_state_lock);
 	current->journal_info = handle;
 
@@ -461,8 +468,10 @@ handle_t *jbd2__journal_start(journal_t *journal, int nblocks, int rsv_blocks,
 		jbd2_free_handle(handle);
 		return ERR_PTR(err);
 	}
+
 	handle->h_type = type;
 	handle->h_line_no = line_no;
+
 	trace_jbd2_handle_start(journal->j_fs_dev->bd_dev,
 				handle->h_transaction->t_tid, type,
 				line_no, nblocks);
@@ -1106,6 +1115,8 @@ int jbd2_journal_get_create_access(handle_t *handle, struct buffer_head *bh)
 {
 	transaction_t *transaction = handle->h_transaction;
 	journal_t *journal;
+
+  /* OyTao: 获取buffer head对应的journal_head */
 	struct journal_head *jh = jbd2_journal_add_journal_head(bh);
 	int err;
 
@@ -1124,7 +1135,9 @@ int jbd2_journal_get_create_access(handle_t *handle, struct buffer_head *bh)
 	 * that case: the transaction must have deleted the buffer for it to be
 	 * reused here.
 	 */
+  /* OyTao: TODO */
 	jbd_lock_bh_state(bh);
+
 	J_ASSERT_JH(jh, (jh->b_transaction == transaction ||
 		jh->b_transaction == NULL ||
 		(jh->b_transaction == journal->j_committing_transaction &&
@@ -1143,22 +1156,27 @@ int jbd2_journal_get_create_access(handle_t *handle, struct buffer_head *bh)
 		 * committed and so it's safe to clear the dirty bit.
 		 */
 		clear_buffer_dirty(jh2bh(jh));
+
 		/* first access by this transaction */
 		jh->b_modified = 0;
 
 		JBUFFER_TRACE(jh, "file as BJ_Reserved");
+
 		spin_lock(&journal->j_list_lock);
 		__jbd2_journal_file_buffer(jh, transaction, BJ_Reserved);
 		spin_unlock(&journal->j_list_lock);
+
 	} else if (jh->b_transaction == journal->j_committing_transaction) {
 		/* first access by this transaction */
 		jh->b_modified = 0;
 
 		JBUFFER_TRACE(jh, "set next transaction");
+
 		spin_lock(&journal->j_list_lock);
 		jh->b_next_transaction = transaction;
 		spin_unlock(&journal->j_list_lock);
 	}
+
 	jbd_unlock_bh_state(bh);
 
 	/*
@@ -1227,6 +1245,7 @@ repeat:
 					    GFP_NOFS|__GFP_NOFAIL);
 
 	jbd_lock_bh_state(bh);
+
 	if (!jh->b_committed_data) {
 		/* Copy out the current buffer contents into the
 		 * preserved, committed copy. */

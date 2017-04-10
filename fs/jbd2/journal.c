@@ -2427,6 +2427,10 @@ static void journal_free_journal_head(struct journal_head *jh)
  *
  * May sleep.
  */
+
+ /*
+  * OyTao: 创建一个journal_head, 同时与buffer head关联，设置BH_JBD bit. inc @bh ref count.
+  */
 struct journal_head *jbd2_journal_add_journal_head(struct buffer_head *bh)
 {
 	struct journal_head *jh;
@@ -2437,6 +2441,7 @@ repeat:
 		new_jh = journal_alloc_journal_head();
 
 	jbd_lock_bh_journal_head(bh);
+
 	if (buffer_jbd(bh)) {
 		jh = bh2jh(bh);
 	} else {
@@ -2449,6 +2454,11 @@ repeat:
 			goto repeat;
 		}
 
+    /*
+     * OyTao: 如果已经创建了新的journal head @new_jh,将journal head与buffer head关联起来 
+     * 关联的操作必须是在lock BH_JournalHead bit的保护下。
+     * 同时设置BH_JBD, inc @bh ref count。
+     */
 		jh = new_jh;
 		new_jh = NULL;		/* We consumed it */
 		set_buffer_jbd(bh);
@@ -2457,10 +2467,15 @@ repeat:
 		get_bh(bh);
 		BUFFER_TRACE(bh, "added journal_head");
 	}
+
+  /* OyTao:　@jh:与@bh已经绑定的journal_head */
 	jh->b_jcount++;
 	jbd_unlock_bh_journal_head(bh);
+
+  /* OyTao: @new_jh:不在需要，可以释放 */
 	if (new_jh)
 		journal_free_journal_head(new_jh);
+
 	return bh->b_private;
 }
 

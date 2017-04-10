@@ -983,6 +983,7 @@ struct buffer_head *ext4_getblk(handle_t *handle, struct inode *inode,
 	bh = sb_getblk(inode->i_sb, map.m_pblk);
 	if (unlikely(!bh))
 		return ERR_PTR(-ENOMEM);
+
 	if (map.m_flags & EXT4_MAP_NEW) {
 		J_ASSERT(create != 0);
 		J_ASSERT(handle != NULL);
@@ -996,11 +997,13 @@ struct buffer_head *ext4_getblk(handle_t *handle, struct inode *inode,
 		 */
 		lock_buffer(bh);
 		BUFFER_TRACE(bh, "call get_create_access");
+
 		err = ext4_journal_get_create_access(handle, bh);
 		if (unlikely(err)) {
 			unlock_buffer(bh);
 			goto errout;
 		}
+
 		if (!buffer_uptodate(bh)) {
 			memset(bh->b_data, 0, inode->i_sb->s_blocksize);
 			set_buffer_uptodate(bh);

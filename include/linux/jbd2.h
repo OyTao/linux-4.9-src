@@ -308,16 +308,28 @@ typedef struct journal_superblock_s
 #include <linux/fs.h>
 #include <linux/sched.h>
 
+/* 
+ * OyTao: 作为buffer head state bits的补充.
+ */
 enum jbd_state_bits {
+
 	BH_JBD			/* Has an attached ext3 journal_head */
 	  = BH_PrivateStart,
+
 	BH_JWrite,		/* Being written to log (@@@ DEBUGGING) */
+
 	BH_Freed,		/* Has been freed (truncated) */
+
 	BH_Revoked,		/* Has been revoked from the log */
+
 	BH_RevokeValid,		/* Revoked flag is valid */
+
 	BH_JBDDirty,		/* Is dirty but journaled */
+
 	BH_State,		/* Pins most journal_head state */
+
 	BH_JournalHead,		/* Pins bh->b_private and jh->b_bh */
+
 	BH_Shadow,		/* IO on shadow buffer is running */
 	BH_Verified,		/* Metadata block has been verified ok */
 	BH_JBDPrivateStart,	/* First bit available for private use by FS */
@@ -340,6 +352,9 @@ static inline struct buffer_head *jh2bh(struct journal_head *jh)
 	return jh->b_bh;
 }
 
+/* 
+ * OyTao: journal_head作为private存储在buffer head
+ */
 static inline struct journal_head *bh2jh(struct buffer_head *bh)
 {
 	return bh->b_private;
@@ -818,6 +833,7 @@ struct journal_s
 	/*
 	 * Number of processes waiting to create a barrier lock [j_state_lock]
 	 */
+  /* OyTao: TODO */
 	int			j_barrier_count;
 
 	/* The barrier lock itself */
