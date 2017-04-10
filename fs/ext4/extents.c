@@ -1194,6 +1194,7 @@ static int ext4_ext_split(handle_t *handle, struct inode *inode,
 		err = -ENOMEM;
 		goto cleanup;
 	}
+
 	lock_buffer(bh);
 
 	err = ext4_journal_get_create_access(handle, bh);

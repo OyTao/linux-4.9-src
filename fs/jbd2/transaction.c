@@ -793,6 +793,7 @@ static void jbd2_freeze_jh_data(struct journal_head *jh)
 	page = bh->b_page;
 	offset = offset_in_page(bh->b_data);
 	source = kmap_atomic(page);
+
 	/* Fire data frozen trigger just before we copy the data */
 	jbd2_buffer_frozen_trigger(jh, source + offset, jh->b_triggers);
 	memcpy(jh->b_frozen_data, source + offset, bh->b_size);
@@ -833,17 +834,21 @@ do_get_write_access(handle_t *handle, struct journal_head *jh,
 	jbd_debug(5, "journal_head %p, force_copy %d\n", jh, force_copy);
 
 	JBUFFER_TRACE(jh, "entry");
+
 repeat:
 	bh = jh2bh(jh);
 
 	/* @@@ Need to check for errors here at some point. */
 
  	start_lock = jiffies;
+  
+  /* OyTao: lock @bh,同时设置BH_State lock */
 	lock_buffer(bh);
 	jbd_lock_bh_state(bh);
 
 	/* If it takes too long to lock the buffer, trace it */
 	time_lock = jbd2_time_diff(start_lock, jiffies);
+
 	if (time_lock > HZ/10)
 		trace_jbd2_lock_buffer_stall(bh->b_bdev->bd_dev,
 			jiffies_to_msecs(time_lock));
@@ -867,13 +872,16 @@ repeat:
 		 * transaction or the existing committing transaction?
 		 */
 		if (jh->b_transaction) {
+
 			J_ASSERT_JH(jh,
 				jh->b_transaction == transaction ||
 				jh->b_transaction ==
 					journal->j_committing_transaction);
+      
 			if (jh->b_next_transaction)
 				J_ASSERT_JH(jh, jh->b_next_transaction ==
 							transaction);
+
 			warn_dirty_buffer(bh);
 		}
 		/*
@@ -882,6 +890,8 @@ repeat:
 		 * with running write-out.
 		 */
 		JBUFFER_TRACE(jh, "Journalling dirty buffer");
+
+    /* OyTao: TODO */
 		clear_buffer_dirty(bh);
 		set_buffer_jbddirty(bh);
 	}
@@ -907,7 +917,7 @@ repeat:
 	 * this is the first time this transaction is touching this buffer,
 	 * reset the modified flag
 	 */
-       jh->b_modified = 0;
+  jh->b_modified = 0;
 
 	/*
 	 * If the buffer is not journaled right now, we need to make sure it
@@ -923,12 +933,15 @@ repeat:
 		 * visible before attaching it to the running transaction.
 		 * Paired with barrier in jbd2_write_access_granted()
 		 */
+    /* OyTao: TODO */
 		smp_wmb();
+    
 		spin_lock(&journal->j_list_lock);
 		__jbd2_journal_file_buffer(jh, transaction, BJ_Reserved);
 		spin_unlock(&journal->j_list_lock);
 		goto done;
 	}
+
 	/*
 	 * If there is already a copy-out version of this buffer, then we don't
 	 * need to make another one
@@ -980,10 +993,12 @@ repeat:
 						   GFP_NOFS | __GFP_NOFAIL);
 			goto repeat;
 		}
+
 		jh->b_frozen_data = frozen_buffer;
 		frozen_buffer = NULL;
 		jbd2_freeze_jh_data(jh);
 	}
+
 attach_next:
 	/*
 	 * Make sure all stores to jh (b_modified, b_frozen_data) are visible
@@ -1035,16 +1050,20 @@ static bool jbd2_write_access_granted(handle_t *handle, struct buffer_head *bh,
 	rcu_read_lock();
 	if (!buffer_jbd(bh))
 		goto out;
+
 	/* This should be bh2jh() but that doesn't work with inline functions */
 	jh = READ_ONCE(bh->b_private);
 	if (!jh)
 		goto out;
+
 	/* For undo access buffer must have data copied */
 	if (undo && !jh->b_committed_data)
 		goto out;
+
 	if (jh->b_transaction != handle->h_transaction &&
 	    jh->b_next_transaction != handle->h_transaction)
 		goto out;
+
 	/*
 	 * There are two reasons for the barrier here:
 	 * 1) Make sure to fetch b_bh after we did previous checks so that we
@@ -1054,10 +1073,14 @@ static bool jbd2_write_access_granted(handle_t *handle, struct buffer_head *bh,
 	 * doesn't get reordered and see inconsistent state of concurrent
 	 * do_get_write_access().
 	 */
+  /* OyTao: TODO */
 	smp_mb();
+
 	if (unlikely(jh->b_bh != bh))
 		goto out;
+
 	ret = true;
+
 out:
 	rcu_read_unlock();
 	return ret;
@@ -1086,8 +1109,11 @@ int jbd2_journal_get_write_access(handle_t *handle, struct buffer_head *bh)
 	/* We do not want to get caught playing with fields which the
 	 * log thread also manipulates.  Make sure that the buffer
 	 * completes any outstanding IO before proceeding. */
+
 	rc = do_get_write_access(handle, jh, 0);
+
 	jbd2_journal_put_journal_head(jh);
+
 	return rc;
 }
 
@@ -1124,6 +1150,7 @@ int jbd2_journal_get_create_access(handle_t *handle, struct buffer_head *bh)
 	err = -EROFS;
 	if (is_handle_aborted(handle))
 		goto out;
+
 	journal = transaction->t_journal;
 	err = 0;
 
@@ -1144,6 +1171,8 @@ int jbd2_journal_get_create_access(handle_t *handle, struct buffer_head *bh)
 			  jh->b_jlist == BJ_Forget)));
 
 	J_ASSERT_JH(jh, jh->b_next_transaction == NULL);
+
+  /* OyTao: buffer head必须lock */
 	J_ASSERT_JH(jh, buffer_locked(jh2bh(jh)));
 
 	if (jh->b_transaction == NULL) {
@@ -1162,12 +1191,22 @@ int jbd2_journal_get_create_access(handle_t *handle, struct buffer_head *bh)
 
 		JBUFFER_TRACE(jh, "file as BJ_Reserved");
 
+    /* 
+     * OyTao: 如果当前的jh没有加入到任何transaction中，则加入
+     * 到BJ_Reserved
+     */
 		spin_lock(&journal->j_list_lock);
 		__jbd2_journal_file_buffer(jh, transaction, BJ_Reserved);
 		spin_unlock(&journal->j_list_lock);
 
 	} else if (jh->b_transaction == journal->j_committing_transaction) {
 		/* first access by this transaction */
+    /* 
+     * OyTao: 如果@jh所在的transaction是正在提交的j_committing_transaction,
+     * 则当前的@jh由当前的j_committing_transaction处理完之后，
+     * 还需要由handle的transaction处理。
+     * 设置b_next_transaction = @transaction
+     */
 		jh->b_modified = 0;
 
 		JBUFFER_TRACE(jh, "set next transaction");
@@ -1186,8 +1225,10 @@ int jbd2_journal_get_create_access(handle_t *handle, struct buffer_head *bh)
 	 * and the reallocating as data - this would cause a second revoke,
 	 * which hits an assertion error.
 	 */
+  /* OyTao: TODO  */
 	JBUFFER_TRACE(jh, "cancelling revoke");
 	jbd2_journal_cancel_revoke(handle, jh);
+
 out:
 	jbd2_journal_put_journal_head(jh);
 	return err;
@@ -1464,6 +1505,7 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 	spin_lock(&journal->j_list_lock);
 	__jbd2_journal_file_buffer(jh, transaction, BJ_Metadata);
 	spin_unlock(&journal->j_list_lock);
+
 out_unlock_bh:
 	jbd_unlock_bh_state(bh);
 out:
@@ -1823,6 +1865,7 @@ __blist_add_buffer(struct journal_head **list, struct journal_head *jh)
  * jbd_lock_bh_state(jh2bh(jh)) is held.
  */
 
+/* OyTao: @list:对应的transaction的list, @jh:要从@list中删除的journal_head */
 static inline void
 __blist_del_buffer(struct journal_head **list, struct journal_head *jh)
 {
@@ -1846,6 +1889,7 @@ __blist_del_buffer(struct journal_head **list, struct journal_head *jh)
  *
  * Called under j_list_lock.
  */
+/* OyTao: 将@jh从对应的list列表中删除 */
 static void __jbd2_journal_temp_unlink_buffer(struct journal_head *jh)
 {
 	struct journal_head **list = NULL;
@@ -1853,6 +1897,7 @@ static void __jbd2_journal_temp_unlink_buffer(struct journal_head *jh)
 	struct buffer_head *bh = jh2bh(jh);
 
 	J_ASSERT_JH(jh, jbd_is_locked_bh_state(bh));
+
 	transaction = jh->b_transaction;
 	if (transaction)
 		assert_spin_locked(&transaction->t_journal->j_list_lock);
@@ -1882,6 +1927,7 @@ static void __jbd2_journal_temp_unlink_buffer(struct journal_head *jh)
 
 	__blist_del_buffer(list, jh);
 	jh->b_jlist = BJ_None;
+
 	if (test_clear_buffer_jbddirty(bh))
 		mark_buffer_dirty(bh);	/* Expose it to the VM */
 }
@@ -2338,6 +2384,7 @@ void __jbd2_journal_file_buffer(struct journal_head *jh,
 	int was_dirty = 0;
 	struct buffer_head *bh = jh2bh(jh);
 
+  /* OyTao: TODO */
 	J_ASSERT_JH(jh, jbd_is_locked_bh_state(bh));
 	assert_spin_locked(&transaction->t_journal->j_list_lock);
 
@@ -2345,6 +2392,7 @@ void __jbd2_journal_file_buffer(struct journal_head *jh,
 	J_ASSERT_JH(jh, jh->b_transaction == transaction ||
 				jh->b_transaction == NULL);
 
+  /* OyTao: 如果@jh已经加入到@transaction中，则退出 */
 	if (jh->b_transaction && jh->b_jlist == jlist)
 		return;
 
@@ -2359,6 +2407,7 @@ void __jbd2_journal_file_buffer(struct journal_head *jh,
 		 */
 		if (buffer_dirty(bh))
 			warn_dirty_buffer(bh);
+
 		if (test_clear_buffer_dirty(bh) ||
 		    test_clear_buffer_jbddirty(bh))
 			was_dirty = 1;
@@ -2367,7 +2416,9 @@ void __jbd2_journal_file_buffer(struct journal_head *jh,
 	if (jh->b_transaction)
 		__jbd2_journal_temp_unlink_buffer(jh);
 	else
+    /* OyTao: inc ref count */
 		jbd2_journal_grab_journal_head(bh);
+
 	jh->b_transaction = transaction;
 
 	switch (jlist) {
@@ -2390,6 +2441,7 @@ void __jbd2_journal_file_buffer(struct journal_head *jh,
 		break;
 	}
 
+  /* OyTao: 将对应的@jh加入到对应的transcation list中 */
 	__blist_add_buffer(list, jh);
 	jh->b_jlist = jlist;
 
@@ -2447,12 +2499,14 @@ void __jbd2_journal_refile_buffer(struct journal_head *jh)
 	 */
 	jh->b_transaction = jh->b_next_transaction;
 	jh->b_next_transaction = NULL;
+
 	if (buffer_freed(bh))
 		jlist = BJ_Forget;
 	else if (jh->b_modified)
 		jlist = BJ_Metadata;
 	else
 		jlist = BJ_Reserved;
+
 	__jbd2_journal_file_buffer(jh, jh->b_transaction, jlist);
 	J_ASSERT_JH(jh, jh->b_transaction->t_state == T_RUNNING);
 

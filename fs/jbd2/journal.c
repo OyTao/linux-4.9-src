@@ -2483,15 +2483,19 @@ repeat:
  * Grab a ref against this buffer_head's journal_head.  If it ended up not
  * having a journal_head, return NULL
  */
+
+/* OyTao: inc journal_head ref count */
 struct journal_head *jbd2_journal_grab_journal_head(struct buffer_head *bh)
 {
 	struct journal_head *jh = NULL;
 
 	jbd_lock_bh_journal_head(bh);
+
 	if (buffer_jbd(bh)) {
 		jh = bh2jh(bh);
 		jh->b_jcount++;
 	}
+
 	jbd_unlock_bh_journal_head(bh);
 	return jh;
 }

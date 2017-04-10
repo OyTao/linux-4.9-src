@@ -237,6 +237,7 @@ int __ext4_forget(const char *where, unsigned int line, handle_t *handle,
 	return err;
 }
 
+/* OyTao:调用者必须lock buffer head */
 int __ext4_journal_get_create_access(const char *where, unsigned int line,
 				handle_t *handle, struct buffer_head *bh)
 {
