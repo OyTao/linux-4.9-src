@@ -432,6 +432,8 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	stats.run.rs_running = jbd2_time_diff(commit_transaction->t_start,
 					      stats.run.rs_locked);
 
+
+  /* OyTao:等待所有的handle结束 */
 	spin_lock(&commit_transaction->t_handle_lock);
 	while (atomic_read(&commit_transaction->t_updates)) {
 		DEFINE_WAIT(wait);
@@ -448,6 +450,7 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 		finish_wait(&journal->j_wait_updates, &wait);
 	}
 	spin_unlock(&commit_transaction->t_handle_lock);
+
 
 	J_ASSERT (atomic_read(&commit_transaction->t_outstanding_credits) <=
 			journal->j_max_transaction_buffers);
@@ -468,6 +471,10 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	 * that multiple jbd2_journal_get_write_access() calls to the same
 	 * buffer are perfectly permissible.
 	 */
+  /* OyTao: @t_reserved_list中保存的都是没有修改过的jh,所以这里不需要提交，
+   * 如果有committed_data,直接释放。
+   * 同时将jh从当前的transaction中移除
+   */
 	while (commit_transaction->t_reserved_list) {
 		jh = commit_transaction->t_reserved_list;
 		JBUFFER_TRACE(jh, "reserved, unused: refile");
@@ -491,6 +498,7 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	 * checkpoint lists.  We do this *before* commit because it potentially
 	 * frees some memory
 	 */
+  /* OyTao: 处理checkpoint TODO　*/
 	spin_lock(&journal->j_list_lock);
 	__jbd2_journal_clean_checkpoint_list(journal, false);
 	spin_unlock(&journal->j_list_lock);
@@ -536,6 +544,7 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	err = journal_submit_data_buffers(journal, commit_transaction);
 	if (err)
 		jbd2_journal_abort(journal, err);
+
 
 	blk_start_plug(&plug);
 	jbd2_journal_write_revoke_records(commit_transaction, &log_bufs);

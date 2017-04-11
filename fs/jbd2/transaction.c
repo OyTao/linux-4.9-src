@@ -1404,6 +1404,7 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 				jh->b_next_transaction == transaction);
 		jbd_unlock_bh_state(bh);
 	}
+
 	if (jh->b_modified == 1) {
 		/* If it's in our transaction it must be in BJ_Metadata list. */
 		if (jh->b_transaction == transaction &&
@@ -2651,12 +2652,14 @@ int jbd2_journal_begin_ordered_truncate(journal_t *journal,
 	spin_lock(&journal->j_list_lock);
 	inode_trans = jinode->i_transaction;
 	spin_unlock(&journal->j_list_lock);
+
 	if (inode_trans == commit_trans) {
 		ret = filemap_fdatawrite_range(jinode->i_vfs_inode->i_mapping,
 			new_size, LLONG_MAX);
 		if (ret)
 			jbd2_journal_abort(journal, ret);
 	}
+
 out:
 	return ret;
 }
