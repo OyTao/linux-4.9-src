@@ -24,11 +24,14 @@
 /*
  * ---- Global proportion definitions ----
  */
+/* OyTao:TODO */
 struct fprop_global {
 	/* Number of events in the current period */
 	struct percpu_counter events;
+
 	/* Current period */
 	unsigned int period;
+
 	/* Synchronization with period transitions */
 	seqcount_t sequence;
 };

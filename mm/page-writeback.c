@@ -126,10 +126,12 @@ struct wb_domain global_wb_domain;
 
 /* consolidated parameters for balance_dirty_pages() and its subroutines */
 struct dirty_throttle_control {
+
 #ifdef CONFIG_CGROUP_WRITEBACK
 	struct wb_domain	*dom;
 	struct dirty_throttle_control *gdtc;	/* only set in memcg dtc's */
 #endif
+
 	struct bdi_writeback	*wb;
 	struct fprop_local_percpu *wb_completions;
 
@@ -650,6 +652,7 @@ int wb_domain_init(struct wb_domain *dom, gfp_t gfp)
 	spin_lock_init(&dom->lock);
 
 	init_timer_deferrable(&dom->period_timer);
+
 	dom->period_timer.function = writeout_period;
 	dom->period_timer.data = (unsigned long)dom;
 
@@ -1922,6 +1925,7 @@ EXPORT_SYMBOL(balance_dirty_pages_ratelimited);
  * Determines whether background writeback should keep writing @wb or it's
  * clean enough.  Returns %true if writeback should continue.
  */
+/* OyTao: TODO */
 bool wb_over_bg_thresh(struct bdi_writeback *wb)
 {
 	struct dirty_throttle_control gdtc_stor = { GDTC_INIT(wb) };

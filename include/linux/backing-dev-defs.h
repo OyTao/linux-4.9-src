@@ -98,6 +98,7 @@ struct bdi_writeback {
 	unsigned long dirtied_stamp;
 	unsigned long written_stamp;	/* pages written at bw_time_stamp */
 	unsigned long write_bandwidth;	/* the estimated write bandwidth */
+
 	unsigned long avg_write_bandwidth; /* further smoothed write bw, > 0 */
 
 	/*

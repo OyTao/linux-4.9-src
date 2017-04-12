@@ -45,17 +45,38 @@ struct wb_completion {
 struct wb_writeback_work {
 	long nr_pages;
 	struct super_block *sb;
+
+  /* OyTao: 如果不为NULL，则表示仅回写比指定时间晚的inode */
 	unsigned long *older_than_this;
+
+  /*
+   * OyTao: WB_SYNC_ALL:遇到locked的inode, 必须等待inode unlocked.
+   * WB_SYNC_NONE,跳过locked inode.
+   */
 	enum writeback_sync_modes sync_mode;
+
+  /* OyTao: TODO */
 	unsigned int tagged_writepages:1;
+
+  /* OyTao: kupdate = 1, 表示周期性操作；否则不是 */
 	unsigned int for_kupdate:1;
+
+  /* OyTao: TODO */
 	unsigned int range_cyclic:1;
+
+  /* OyTao: 后台回写操作flag  */
 	unsigned int for_background:1;
+
+  /* OyTao: TODO */
 	unsigned int for_sync:1;	/* sync(2) WB_SYNC_ALL writeback */
+
+  /* OyTao: work执行完之后是否需要free */
 	unsigned int auto_free:1;	/* free on completion */
+
 	enum wb_reason reason;		/* why was writeback initiated? */
 
 	struct list_head list;		/* pending work list */
+
 	struct wb_completion *done;	/* set if the caller waits */
 };
 
@@ -165,6 +186,7 @@ static void inode_io_list_del_locked(struct inode *inode,
 	wb_io_lists_depopulated(wb);
 }
 
+/* OyTao: TODO */
 static void wb_wakeup(struct bdi_writeback *wb)
 {
 	spin_lock_bh(&wb->work_lock);
@@ -179,12 +201,18 @@ static void wb_queue_work(struct bdi_writeback *wb,
 	trace_writeback_queue(wb, work);
 
 	spin_lock_bh(&wb->work_lock);
+
 	if (!test_bit(WB_registered, &wb->state))
 		goto out_unlock;
+
 	if (work->done)
 		atomic_inc(&work->done->cnt);
+
+  /* OyTao: 将@work加入到wb中的work_list中 */
 	list_add_tail(&work->list, &wb->work_list);
+
 	mod_delayed_work(bdi_wq, &wb->dwork, 0);
+
 out_unlock:
 	spin_unlock_bh(&wb->work_lock);
 }
@@ -752,6 +780,10 @@ EXPORT_SYMBOL_GPL(inode_congested);
  * relation to the total write bandwidth of all wb's w/ dirty inodes on
  * @wb->bdi.
  */
+/*
+ * OyTao: 根据当前的@wb的avg_write_bandwidth以及bdi的total_write_bandwidth计算当前
+ * 真实的nr_pages.
+ */
 static long wb_split_bdi_pages(struct bdi_writeback *wb, long nr_pages)
 {
 	unsigned long this_bw = wb->avg_write_bandwidth;
@@ -924,6 +956,7 @@ void wb_start_writeback(struct bdi_writeback *wb, long nr_pages,
 {
 	struct wb_writeback_work *work;
 
+  /* OyTao: wb是否用dirty IO是一个bit flag  */
 	if (!wb_has_dirty_io(wb))
 		return;
 
@@ -931,6 +964,7 @@ void wb_start_writeback(struct bdi_writeback *wb, long nr_pages,
 	 * This is WB_SYNC_NONE writeback, so if allocation fails just
 	 * wakeup the thread for old dirty data writeback
 	 */
+  /* OyTao: 分配初始化一个work */
 	work = kzalloc(sizeof(*work),
 		       GFP_NOWAIT | __GFP_NOMEMALLOC | __GFP_NOWARN);
 	if (!work) {
@@ -1715,6 +1749,7 @@ static long wb_writeback(struct bdi_writeback *wb,
 		 * so that e.g. sync can proceed. They'll be restarted
 		 * after the other works are all done.
 		 */
+    /* OyTao: 如果是后台或者是周期性操作，暂时先不writeback, 稍后处理 TODO */
 		if ((work->for_background || work->for_kupdate) &&
 		    !list_empty(&wb->work_list))
 			break;
@@ -1723,6 +1758,7 @@ static long wb_writeback(struct bdi_writeback *wb,
 		 * For background writeout, stop when we are below the
 		 * background dirty threshold
 		 */
+    /* OyTao: 如果是后台writeback,并且脏页没有超过阈值, 暂时不处理 */
 		if (work->for_background && !wb_over_bg_thresh(wb))
 			break;
 
@@ -1788,6 +1824,10 @@ static long wb_writeback(struct bdi_writeback *wb,
 /*
  * Return the next wb_writeback_work struct that hasn't been processed yet.
  */
+/* 
+ * OyTao: 从当前的@wb的work_list中取出来下一个work
+ * 同时将work从work_list中删除
+ */
 static struct wb_writeback_work *get_next_work_item(struct bdi_writeback *wb)
 {
 	struct wb_writeback_work *work = NULL;
@@ -1806,6 +1846,7 @@ static struct wb_writeback_work *get_next_work_item(struct bdi_writeback *wb)
  * Add in the number of potentially dirty inodes, because each inode
  * write can dirty pagecache in the underlying blockdev.
  */
+/* OyTao: 难道全局的FILE_DIRTY以及UNSTABLE_NFS, 同时加上当前per-cpu的dirty inode */
 static unsigned long get_nr_dirty_pages(void)
 {
 	return global_node_page_state(NR_FILE_DIRTY) +
@@ -1873,7 +1914,9 @@ static long wb_do_writeback(struct bdi_writeback *wb)
 	struct wb_writeback_work *work;
 	long wrote = 0;
 
+  /* OyTao: 设置当前@wb的状态 running */
 	set_bit(WB_writeback_running, &wb->state);
+
 	while ((work = get_next_work_item(wb)) != NULL) {
 		struct wb_completion *done = work->done;
 
@@ -1881,8 +1924,11 @@ static long wb_do_writeback(struct bdi_writeback *wb)
 
 		wrote += wb_writeback(wb, work);
 
+    /* OyTao: 如果work处理完，并且auto_free = true, 则释放work */
 		if (work->auto_free)
 			kfree(work);
+
+    /* OyTao:　TODO */
 		if (done && atomic_dec_and_test(&done->cnt))
 			wake_up_all(&wb->bdi->wb_waitq);
 	}
@@ -1890,6 +1936,7 @@ static long wb_do_writeback(struct bdi_writeback *wb)
 	/*
 	 * Check for periodic writeback, kupdated() style
 	 */
+  /* OyTao: TODO */
 	wrote += wb_check_old_data_flush(wb);
 	wrote += wb_check_background_flush(wb);
 	clear_bit(WB_writeback_running, &wb->state);
@@ -1910,6 +1957,9 @@ void wb_workfn(struct work_struct *work)
 	set_worker_desc("flush-%s", dev_name(wb->bdi->dev));
 	current->flags |= PF_SWAPWRITE;
 
+  /*
+   * OyTao: workqueue rescuer TODO .
+   */
 	if (likely(!current_is_workqueue_rescuer() ||
 		   !test_bit(WB_registered, &wb->state))) {
 		/*
@@ -1918,6 +1968,7 @@ void wb_workfn(struct work_struct *work)
 		 * if @wb is shutting down even when we're running off the
 		 * rescuer as work_list needs to be drained.
 		 */
+    /* OyTao: 正常流程下，会尽可能把work list上所有的work都处理完 */
 		do {
 			pages_written = wb_do_writeback(wb);
 			trace_writeback_pages_written(pages_written);
@@ -1955,6 +2006,7 @@ void wakeup_flusher_threads(long nr_pages, enum wb_reason reason)
 	if (blk_needs_flush_plug(current))
 		blk_schedule_flush_plug(current);
 
+  /* OyTao: 修正需要回收的pages数目 */
 	if (!nr_pages)
 		nr_pages = get_nr_dirty_pages();
 
@@ -1965,6 +2017,7 @@ void wakeup_flusher_threads(long nr_pages, enum wb_reason reason)
 		if (!bdi_has_dirty_io(bdi))
 			continue;
 
+    /* OyTao: wb_split_bdi_pages 根据当前的wb再次修正自己需要回收的nr_pages */
 		list_for_each_entry_rcu(wb, &bdi->wb_list, bdi_node)
 			wb_start_writeback(wb, wb_split_bdi_pages(wb, nr_pages),
 					   false, reason);

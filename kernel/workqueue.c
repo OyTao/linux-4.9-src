@@ -702,6 +702,8 @@ static struct pool_workqueue *get_work_pwq(struct work_struct *work)
  *
  * Return: The worker_pool @work was last associated with.  %NULL if none.
  */
+
+/* OyTao: TODO */
 static struct worker_pool *get_work_pool(struct work_struct *work)
 {
 	unsigned long data = atomic_long_read(&work->data);
@@ -1201,6 +1203,7 @@ out_put:
  *
  * This function is safe to call from any context including IRQ handler.
  */
+/* OyTao: TODO */
 static int try_to_grab_pending(struct work_struct *work, bool is_dwork,
 			       unsigned long *flags)
 {
@@ -1272,6 +1275,7 @@ fail:
 	if (work_is_canceling(work))
 		return -ENOENT;
 	cpu_relax();
+
 	return -EAGAIN;
 }
 

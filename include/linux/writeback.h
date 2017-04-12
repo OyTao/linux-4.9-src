@@ -130,7 +130,9 @@ struct wb_domain {
 	 * of this period itself is measured in page writeback completions.
 	 */
 	struct fprop_global completions;
+
 	struct timer_list period_timer;	/* timer for aging of completions */
+
 	unsigned long period_time;
 
 	/*

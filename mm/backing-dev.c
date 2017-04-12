@@ -309,6 +309,7 @@ static int wb_init(struct bdi_writeback *wb, struct backing_dev_info *bdi,
 
 	spin_lock_init(&wb->work_lock);
 	INIT_LIST_HEAD(&wb->work_list);
+  /* OyTao: writeback handle function  */
 	INIT_DELAYED_WORK(&wb->dwork, wb_workfn);
 
 	wb->congested = wb_congested_get_create(bdi, blkcg_id, gfp);
@@ -515,6 +516,9 @@ static void cgwb_kill(struct bdi_writeback *wb)
 	percpu_ref_kill(&wb->refcnt);
 }
 
+/* 
+ * OyTao: TODO
+ */
 static int cgwb_create(struct backing_dev_info *bdi,
 		       struct cgroup_subsys_state *memcg_css, gfp_t gfp)
 {

@@ -5285,6 +5285,7 @@ repeat:
 		 * space in a special descriptor */
 		if (ac->ac_status == AC_STATUS_FOUND &&
 		    ac->ac_o_ex.fe_len < ac->ac_b_ex.fe_len)
+
 		   /* OyTao:从buddy cache中分配的空间大于需求的空间，创建新的PA */
 			*errp = ext4_mb_new_preallocation(ac);
 
@@ -5298,6 +5299,7 @@ repeat:
 	if (likely(ac->ac_status == AC_STATUS_FOUND)) {
 		/* OyTao: TODO */
 		*errp = ext4_mb_mark_diskspace_used(ac, handle, reserv_clstrs);
+
 		if (*errp) {
 			ext4_discard_allocated_blocks(ac);
 			goto errout;
