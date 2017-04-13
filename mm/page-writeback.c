@@ -372,6 +372,7 @@ static unsigned long global_dirtyable_memory(void)
 	 */
 	x -= min(x, totalreserve_pages);
 
+  /* OyTao: node inactive and active pages 为什么是node统计 */
 	x += global_node_page_state(NR_INACTIVE_FILE);
 	x += global_node_page_state(NR_ACTIVE_FILE);
 
@@ -391,20 +392,33 @@ static unsigned long global_dirtyable_memory(void)
  * dirty limits will be lifted by 1/4 for PF_LESS_THROTTLE (ie. nfsd) and
  * real-time tasks.
  */
+/*
+ * OyTao: 根据global available_memory以及memory cgroup内部的avail memory，
+ * 同时根据设置的dirty_bytes, bg_dirty_bytes,
+ * dirty_ratio, dirty_bg_ratio，
+ * 计算出bg_thresh和thresh值，存放在当前的@dtc中。
+ */
 static void domain_dirty_limits(struct dirty_throttle_control *dtc)
 {
 	const unsigned long available_memory = dtc->avail;
 	struct dirty_throttle_control *gdtc = mdtc_gdtc(dtc);
+
 	unsigned long bytes = vm_dirty_bytes;
 	unsigned long bg_bytes = dirty_background_bytes;
+
 	/* convert ratios to per-PAGE_SIZE for higher precision */
 	unsigned long ratio = (vm_dirty_ratio * PAGE_SIZE) / 100;
 	unsigned long bg_ratio = (dirty_background_ratio * PAGE_SIZE) / 100;
+
 	unsigned long thresh;
 	unsigned long bg_thresh;
 	struct task_struct *tsk;
 
 	/* gdtc is !NULL iff @dtc is for memcg domain */
+  /* 
+   * OyTao: 如果存在memory cgroup，则根据当前的bytes以及bg_bytes，
+   * 以及memory cgorup avail_memory, 修正ratio， bg_ratio。
+   */
 	if (gdtc) {
 		unsigned long global_avail = gdtc->avail;
 
@@ -418,9 +432,11 @@ static void domain_dirty_limits(struct dirty_throttle_control *dtc)
 		if (bytes)
 			ratio = min(DIV_ROUND_UP(bytes, global_avail),
 				    PAGE_SIZE);
+
 		if (bg_bytes)
 			bg_ratio = min(DIV_ROUND_UP(bg_bytes, global_avail),
 				       PAGE_SIZE);
+
 		bytes = bg_bytes = 0;
 	}
 
@@ -434,13 +450,17 @@ static void domain_dirty_limits(struct dirty_throttle_control *dtc)
 	else
 		bg_thresh = (bg_ratio * available_memory) / PAGE_SIZE;
 
+  /* OyTao: bg_thresh 不可能大于thresh, 否则则设置为thresh的一半 */
 	if (bg_thresh >= thresh)
 		bg_thresh = thresh / 2;
+
+  /* OyTao: 如果设置了PF_LESS_THROTTLE,则提高阈值 TODO  */
 	tsk = current;
 	if (tsk->flags & PF_LESS_THROTTLE || rt_task(tsk)) {
 		bg_thresh += bg_thresh / 4 + global_wb_domain.dirty_limit / 32;
 		thresh += thresh / 4 + global_wb_domain.dirty_limit / 32;
 	}
+
 	dtc->thresh = thresh;
 	dtc->bg_thresh = bg_thresh;
 
@@ -765,6 +785,7 @@ static void mdtc_calc_avail(struct dirty_throttle_control *mdtc,
  * The wb's share of dirty limit will be adapting to its throughput and
  * bounded by the bdi->min_ratio and/or bdi->max_ratio parameters, if set.
  */
+/* OyTao:　TODO */
 static unsigned long __wb_calc_thresh(struct dirty_throttle_control *dtc)
 {
 	struct wb_domain *dom = dtc_dom(dtc);
@@ -792,6 +813,7 @@ static unsigned long __wb_calc_thresh(struct dirty_throttle_control *dtc)
 	return wb_thresh;
 }
 
+/* OyTao: TODO */
 unsigned long wb_calc_thresh(struct bdi_writeback *wb, unsigned long thresh)
 {
 	struct dirty_throttle_control gdtc = { GDTC_INIT(wb),
@@ -1929,7 +1951,10 @@ EXPORT_SYMBOL(balance_dirty_pages_ratelimited);
 bool wb_over_bg_thresh(struct bdi_writeback *wb)
 {
 	struct dirty_throttle_control gdtc_stor = { GDTC_INIT(wb) };
+
+  /* OyTao: memory cgroup  TODO */
 	struct dirty_throttle_control mdtc_stor = { MDTC_INIT(wb, &gdtc_stor) };
+
 	struct dirty_throttle_control * const gdtc = &gdtc_stor;
 	struct dirty_throttle_control * const mdtc = mdtc_valid(&mdtc_stor) ?
 						     &mdtc_stor : NULL;
@@ -1939,9 +1964,13 @@ bool wb_over_bg_thresh(struct bdi_writeback *wb)
 	 * as we're trying to decide whether to put more under writeback.
 	 */
 	gdtc->avail = global_dirtyable_memory();
+
 	gdtc->dirty = global_node_page_state(NR_FILE_DIRTY) +
 		      global_node_page_state(NR_UNSTABLE_NFS);
+
+  /* OyTao: 计算出来thresh以及bg_thresh */
 	domain_dirty_limits(gdtc);
+
 
 	if (gdtc->dirty > gdtc->bg_thresh)
 		return true;
@@ -1950,12 +1979,15 @@ bool wb_over_bg_thresh(struct bdi_writeback *wb)
 	    wb_calc_thresh(gdtc->wb, gdtc->bg_thresh))
 		return true;
 
+  /* OyTao: 如果存在memory cgroup TODO */
 	if (mdtc) {
 		unsigned long filepages, headroom, writeback;
 
 		mem_cgroup_wb_stats(wb, &filepages, &headroom, &mdtc->dirty,
 				    &writeback);
+
 		mdtc_calc_avail(mdtc, filepages, headroom);
+
 		domain_dirty_limits(mdtc);	/* ditto, ignore writeback */
 
 		if (mdtc->dirty > mdtc->bg_thresh)

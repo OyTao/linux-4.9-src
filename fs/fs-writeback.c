@@ -120,6 +120,7 @@ static inline struct inode *wb_inode(struct list_head *head)
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(wbc_writepage);
 
+/* OyTao:TODO */
 static bool wb_io_lists_populated(struct bdi_writeback *wb)
 {
 	if (wb_has_dirty_io(wb)) {
@@ -1124,35 +1125,53 @@ static int move_expired_inodes(struct list_head *delaying_queue,
 	int do_sb_sort = 0;
 	int moved = 0;
 
+  /* OyTao: 更新older_than_this值 TODO(EXPIRE_DIRTY_ATIME)  */
 	if ((flags & EXPIRE_DIRTY_ATIME) == 0)
 		older_than_this = work->older_than_this;
 	else if (!work->for_sync) {
 		expire_time = jiffies - (dirtytime_expire_interval * HZ);
 		older_than_this = &expire_time;
 	}
+
+  /*
+   * OyTao: 遍历所有的@delaying_queue链表上所有的inode,比较i_dirty_time与
+   * older_than_this,如果小于older_than_this, 则需要处理；将其移入临时链表
+   * @tmp中，对于所有的inode如果不是同一个superblock则需要把@tmp中的按照superblock
+   * （聚合）移入到@dispatch_queue中。
+   */
 	while (!list_empty(delaying_queue)) {
 		inode = wb_inode(delaying_queue->prev);
 		if (older_than_this &&
 		    inode_dirtied_after(inode, *older_than_this))
 			break;
+
+    /* OyTao: 将已经超时的inode从之前的链表中移除，移入到@tmp list中 */
 		list_move(&inode->i_io_list, &tmp);
 		moved++;
+
+    /* OyTao: TODO */
 		if (flags & EXPIRE_DIRTY_ATIME)
 			set_bit(__I_DIRTY_TIME_EXPIRED, &inode->i_state);
+
 		if (sb_is_blkdev_sb(inode->i_sb))
 			continue;
+
+    /* OyTao: 判断需要move的inode是否是同一个superblock */
 		if (sb && sb != inode->i_sb)
 			do_sb_sort = 1;
+
 		sb = inode->i_sb;
 	}
 
 	/* just one sb in list, splice to dispatch_queue and we're done */
+  /* OyTao: 如果是同一个superblock,则直接移入到@dispatch_queue中 */
 	if (!do_sb_sort) {
 		list_splice(&tmp, dispatch_queue);
 		goto out;
 	}
 
 	/* Move inodes from one superblock together */
+  /* OyTao: 按照superblock排序，然后移入到@dispatch_queue*/
 	while (!list_empty(&tmp)) {
 		sb = wb_inode(tmp.prev)->i_sb;
 		list_for_each_prev_safe(pos, node, &tmp) {
@@ -1176,6 +1195,14 @@ out:
  *                                           |
  *                                           +--> dequeue for IO
  */
+/*
+ * OyTao:
+ * 1) 将b_more_io链表上的inode全部移入到b_io链表中。
+ * 2) 将b_dirty以及b_dirty_time链表上的超时都按照superblock(聚合）移入到b_io链表中。
+ * 3) TODO (EXPIRE_DIRTY_ATIME)
+ *
+ * 调用者必须hold list_lock of wb 
+ */
 static void queue_io(struct bdi_writeback *wb, struct wb_writeback_work *work)
 {
 	int moved;
@@ -1187,6 +1214,7 @@ static void queue_io(struct bdi_writeback *wb, struct wb_writeback_work *work)
 				     EXPIRE_DIRTY_ATIME, work);
 	if (moved)
 		wb_io_lists_populated(wb);
+
 	trace_writeback_queue_io(wb, work, moved);
 }
 
@@ -1537,6 +1565,12 @@ static long writeback_sb_inodes(struct super_block *sb,
 				 * superblock, move all inodes not belonging
 				 * to it back onto the dirty list.
 				 */
+        /*
+         * OyTao: 如果参数中指定了需要writeback的sb,对于不是一致的inodes则需要
+         * 重新设置了inode dirtied time，然后加入b_dirty的头部。
+         * 如果没有指定需要writeback特定的superblock, 遇到与@sb不一致的则立马返回
+         * caller会重新设置@sb再次writeback_sb_inodes.
+         */
 				redirty_tail(inode, wb);
 				continue;
 			}
@@ -1555,11 +1589,15 @@ static long writeback_sb_inodes(struct super_block *sb,
 		 * kind writeout is handled by the freer.
 		 */
 		spin_lock(&inode->i_lock);
+
+    /* OyTao: I_NEW, I_FREEING, I_WILL_FREE这一类不需要writeaback */
 		if (inode->i_state & (I_NEW | I_FREEING | I_WILL_FREE)) {
 			spin_unlock(&inode->i_lock);
+      /* OyTao: 为什么要重新加入到b_dirty 链表中 */
 			redirty_tail(inode, wb);
 			continue;
 		}
+
 		if ((inode->i_state & I_SYNC) && wbc.sync_mode != WB_SYNC_ALL) {
 			/*
 			 * If this inode is locked for writeback and we are not
@@ -1647,6 +1685,7 @@ static long writeback_sb_inodes(struct super_block *sb,
 				break;
 		}
 	}
+
 	return wrote;
 }
 
@@ -1758,7 +1797,7 @@ static long wb_writeback(struct bdi_writeback *wb,
 		 * For background writeout, stop when we are below the
 		 * background dirty threshold
 		 */
-    /* OyTao: 如果是后台writeback,并且脏页没有超过阈值, 暂时不处理 */
+    /* OyTao: 如果是后台writeback,并且脏页没有超过backgroud阈值, 暂时不处理 */
 		if (work->for_background && !wb_over_bg_thresh(wb))
 			break;
 
@@ -1768,6 +1807,7 @@ static long wb_writeback(struct bdi_writeback *wb,
 		 * handled by these works yielding to any other work so we are
 		 * safe.
 		 */
+    /* OyTao: 更新oldeste_jif */
 		if (work->for_kupdate) {
 			oldest_jif = jiffies -
 				msecs_to_jiffies(dirty_expire_interval * 10);
@@ -1775,12 +1815,20 @@ static long wb_writeback(struct bdi_writeback *wb,
 			oldest_jif = jiffies;
 
 		trace_writeback_start(wb, work);
+
+    /*
+     * OyTao: 如果当前的b_io为空，则将b_more_io已经b_dirtytime, b_dirty中expired的inodes
+     * 移入到b_io中
+     */
 		if (list_empty(&wb->b_io))
 			queue_io(wb, work);
+
+    /* OyTao: 如果定义了需要writeback的superblock，则只writeback对应的superblock */
 		if (work->sb)
 			progress = writeback_sb_inodes(work->sb, wb, work);
 		else
 			progress = __writeback_inodes_wb(wb, work);
+
 		trace_writeback_written(wb, work);
 
 		wb_update_bandwidth(wb, wb_start);
