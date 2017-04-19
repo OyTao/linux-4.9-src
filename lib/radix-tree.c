@@ -1068,6 +1068,7 @@ unsigned long radix_tree_range_tag_if_tagged(struct radix_tree_root *root,
 
 	node = entry_to_node(child);
 
+  /* OyTao: 一直找到叶子节点包含@iftag,如果中间节点没有@iftag, 则next entry */
 	for (;;) {
 		unsigned offset = radix_tree_descend(node, &child, index);
 		if (!child)

@@ -544,6 +544,7 @@ out_free:
  * writeback completion, wbc_detach_inode() should be called.  This is used
  * to track the cgroup writeback context.
  */
+/* OyTao: TODO */
 void wbc_attach_and_unlock_inode(struct writeback_control *wbc,
 				 struct inode *inode)
 {
@@ -556,9 +557,11 @@ void wbc_attach_and_unlock_inode(struct writeback_control *wbc,
 	wbc->inode = inode;
 
 	wbc->wb_id = wbc->wb->memcg_css->id;
+
 	wbc->wb_lcand_id = inode->i_wb_frn_winner;
 	wbc->wb_tcand_id = 0;
 	wbc->wb_bytes = 0;
+
 	wbc->wb_lcand_bytes = 0;
 	wbc->wb_tcand_bytes = 0;
 
@@ -1550,6 +1553,7 @@ static long writeback_sb_inodes(struct super_block *sb,
 		.range_start		= 0,
 		.range_end		= LLONG_MAX,
 	};
+
 	unsigned long start_time = jiffies;
 	long write_chunk;
 	long wrote = 0;  /* count both pages and inodes */
@@ -1598,6 +1602,10 @@ static long writeback_sb_inodes(struct super_block *sb,
 			continue;
 		}
 
+    /*
+     * OyTao: 如果inode正在writeback, 并且不是WB_SYNC_ALL模式，不需要等待其完成， 
+     * 只需要将其加入到b_more链表中。等待再次处理
+     */
 		if ((inode->i_state & I_SYNC) && wbc.sync_mode != WB_SYNC_ALL) {
 			/*
 			 * If this inode is locked for writeback and we are not
@@ -1608,11 +1616,13 @@ static long writeback_sb_inodes(struct super_block *sb,
 			 * We'll have another go at writing back this inode
 			 * when we completed a full scan of b_io.
 			 */
+
 			spin_unlock(&inode->i_lock);
 			requeue_io(inode, wb);
 			trace_writeback_sb_inodes_requeue(inode);
 			continue;
 		}
+
 		spin_unlock(&wb->list_lock);
 
 		/*
@@ -1620,18 +1630,26 @@ static long writeback_sb_inodes(struct super_block *sb,
 		 * are doing WB_SYNC_NONE writeback. So this catches only the
 		 * WB_SYNC_ALL case.
 		 */
+    /* OyTao: 如果inode 是I_SYNC flag,则此时SYNC == WB_SYNC_NONE,
+     * 如果是WB_SYNC_ALL，上面已经处理过了。
+     */
 		if (inode->i_state & I_SYNC) {
 			/* Wait for I_SYNC. This function drops i_lock... */
 			inode_sleep_on_writeback(inode);
+      
 			/* Inode may be gone, start again */
 			spin_lock(&wb->list_lock);
 			continue;
 		}
+
+    /* OyTao: 标志Inode正在处理writeback */
 		inode->i_state |= I_SYNC;
+
 		wbc_attach_and_unlock_inode(&wbc, inode);
 
 		write_chunk = writeback_chunk_size(wb, work);
 		wbc.nr_to_write = write_chunk;
+
 		wbc.pages_skipped = 0;
 
 		/*
@@ -1732,6 +1750,7 @@ static long writeback_inodes_wb(struct bdi_writeback *wb, long nr_pages,
 		.range_cyclic	= 1,
 		.reason		= reason,
 	};
+
 	struct blk_plug plug;
 
 	blk_start_plug(&plug);

@@ -2668,6 +2668,7 @@ static int ext4_writepages(struct address_space *mapping,
 	percpu_down_read(&sbi->s_journal_flag_rwsem);
 	trace_ext4_writepages(inode, wbc);
 
+  /* OyTao: 如果不需要文件系统不需要pagecache  TODO */
 	if (dax_mapping(mapping)) {
 		ret = dax_writeback_mapping_range(mapping, inode->i_sb->s_bdev,
 						  wbc);
@@ -2679,15 +2680,18 @@ static int ext4_writepages(struct address_space *mapping,
 	 * a transaction for special inodes like journal inode on last iput()
 	 * because that could violate lock ordering on umount
 	 */
+  /* OyTao:不需要writeback pages */
 	if (!mapping->nrpages || !mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
 		goto out_writepages;
 
+  /* OyTao: 如果journal模式是 DATA Module */
 	if (ext4_should_journal_data(inode)) {
 		struct blk_plug plug;
 
 		blk_start_plug(&plug);
 		ret = write_cache_pages(mapping, wbc, __writepage, mapping);
 		blk_finish_plug(&plug);
+
 		goto out_writepages;
 	}
 

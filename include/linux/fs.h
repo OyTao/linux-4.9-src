@@ -440,7 +440,10 @@ struct address_space {
 	unsigned long		nrpages;	/* number of total pages */
 	/* number of shadow or DAX exceptional entries */
 	unsigned long		nrexceptional;
+
+  /* OyTao: 上次执行完之后writeback的index */
 	pgoff_t			writeback_index;/* writeback starts here */
+
 	const struct address_space_operations *a_ops;	/* methods */
 	unsigned long		flags;		/* error bits */
 	spinlock_t		private_lock;	/* for use by the address_space */

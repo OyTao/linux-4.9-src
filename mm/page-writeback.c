@@ -2145,9 +2145,12 @@ void tag_pages_for_writeback(struct address_space *mapping,
 
 	do {
 		spin_lock_irq(&mapping->tree_lock);
+
+    /* OyTao: 将TAG_DIRTY的重新设置为TAG_TOWRITE,设置4096个 */
 		tagged = radix_tree_range_tag_if_tagged(&mapping->page_tree,
 				&start, end, WRITEBACK_TAG_BATCH,
 				PAGECACHE_TAG_DIRTY, PAGECACHE_TAG_TOWRITE);
+
 		spin_unlock_irq(&mapping->tree_lock);
 		WARN_ON_ONCE(tagged > WRITEBACK_TAG_BATCH);
 		cond_resched();
@@ -2210,17 +2213,22 @@ int write_cache_pages(struct address_space *mapping,
 			range_whole = 1;
 		cycled = 1; /* ignore range_cyclic tests */
 	}
+
+
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag = PAGECACHE_TAG_TOWRITE;
 	else
 		tag = PAGECACHE_TAG_DIRTY;
+
 retry:
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag_pages_for_writeback(mapping, index, end);
+
 	done_index = index;
 	while (!done && (index <= end)) {
 		int i;
 
+    /* OyTao:在pagecache中查找tag的page */
 		nr_pages = pagevec_lookup_tag(&pvec, mapping, &index, tag,
 			      min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1);
 		if (nr_pages == 0)
