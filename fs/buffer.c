@@ -2078,8 +2078,10 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 			}
 			continue;
 		}
+
 		if (buffer_new(bh))
 			clear_buffer_new(bh);
+
 		if (!buffer_mapped(bh)) {
 			WARN_ON(bh->b_size != blocksize);
 			if (get_block) {
@@ -2099,6 +2101,7 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 					mark_buffer_dirty(bh);
 					continue;
 				}
+
 				if (block_end > to || block_start < from)
 					zero_user_segments(page,
 						to, block_end,
@@ -2106,11 +2109,13 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 				continue;
 			}
 		}
+
 		if (PageUptodate(page)) {
 			if (!buffer_uptodate(bh))
 				set_buffer_uptodate(bh);
 			continue; 
 		}
+
 		if (!buffer_uptodate(bh) && !buffer_delay(bh) &&
 		    !buffer_unwritten(bh) &&
 		     (block_start < from || block_end > to)) {

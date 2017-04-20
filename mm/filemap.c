@@ -1814,6 +1814,8 @@ find_page:
 		 * pagecache中查找对应的数据
 		 */
 		page = find_get_page(mapping, index);
+
+    /* OyTao: 如果在pagecache中没有找到对应的page(读所在的page), 则需要预读 */
 		if (!page) {
 			page_cache_sync_readahead(mapping,
 					ra, filp,
@@ -1829,6 +1831,7 @@ find_page:
 					ra, filp, page,
 					index, last_index - index);
 		}
+
 		if (!PageUptodate(page)) {
 			/*
 			 * See comment in do_read_cache_page on why
@@ -2438,6 +2441,7 @@ int filemap_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	 */
 	set_page_dirty(page);
 	wait_for_stable_page(page);
+
 out:
 	sb_end_pagefault(inode->i_sb);
 	return ret;

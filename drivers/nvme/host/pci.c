@@ -448,6 +448,7 @@ static void nvme_dif_complete(u32 p, u32 v, struct t10_pi_tuple *pi)
 }
 #endif
 
+/* OyTao: 根据request生成prp */
 static bool nvme_setup_prps(struct nvme_dev *dev, struct request *req,
 		int total_len)
 {

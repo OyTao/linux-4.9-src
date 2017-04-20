@@ -138,7 +138,9 @@ struct bdi_writeback {
 /* OyTao: 用于writeback 模式 （缓存后刷数据） */
 struct backing_dev_info {
 	struct list_head bdi_list;
+  /* OyTao: 最多预读的pages number */
 	unsigned long ra_pages;	/* max readahead in PAGE_SIZE units */
+
 	unsigned int capabilities; /* Device capabilities */
 	congested_fn *congested_fn; /* Function pointer if device is md/dm */
 	void *congested_data;	/* Pointer to aux data for congested func */

@@ -2197,7 +2197,9 @@ int write_cache_pages(struct address_space *mapping,
 	int range_whole = 0;
 	int tag;
 
+  /* OyTao: pagevec:要处理的pages */
 	pagevec_init(&pvec, 0);
+
 	if (wbc->range_cyclic) {
 		writeback_index = mapping->writeback_index; /* prev offset */
 		index = writeback_index;
@@ -2255,8 +2257,15 @@ retry:
 
 			done_index = page->index;
 
+      /* OyTao: write cache page是要在page locked状态下处理的 */
 			lock_page(page);
 
+      /*
+       * OyTao: 
+       * case 1) page已经不属于当前的inode (page->mapping !=mapping)
+       * case 2) page不是dirty状态 (!PageDirty(page)
+       * case 3) page已经处于writeback状态(如果是SYNC_ALL，则等待其完成)
+       * case 4)
 			/*
 			 * Page truncated or invalidated. We can freely skip it
 			 * then, even for data integrity operations: the page

@@ -667,6 +667,7 @@ size_t iov_iter_copy_from_user_atomic(struct page *page,
 		WARN_ON(1);
 		return 0;
 	}
+
 	iterate_all_kinds(i, bytes, v,
 		__copy_from_user_inatomic((p += v.iov_len) - v.iov_len,
 					  v.iov_base, v.iov_len),

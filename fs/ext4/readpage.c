@@ -166,14 +166,14 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		if (last_block > last_block_in_file)
 			last_block = last_block_in_file;
 
-		/* OyTao: page中已经读完的page数目 */
+		/* OyTao: page中已经读完的blocks数目 */
 		page_block = 0;
 
 		/*
 		 * Map blocks using the previous result first.
 		 */
 		/*
-		 * OyTao: TODO 
+		 * OyTao: 如果block_in_file已经在 map_blocks 中, 
 		 */
 		if ((map.m_flags & EXT4_MAP_MAPPED) &&
 		    block_in_file > map.m_lblk &&
@@ -182,13 +182,18 @@ int ext4_mpage_readpages(struct address_space *mapping,
 			unsigned last = map.m_len - map_offset;
 
 			for (relative_block = 0; ; relative_block++) {
+        /* OyTao: 如果整个map都已经读取完了，则取消EXT4_MAP_MAPPED flag */
 				if (relative_block == last) {
 					/* needed? */
 					map.m_flags &= ~EXT4_MAP_MAPPED;
 					break;
 				}
+
+        /* OyTao: 如果已经拿到一个page所有的blocks physical address, 则退出 */
 				if (page_block == blocks_per_page)
 					break;
+        
+        /* OyTao: 对应block的physical address */
 				blocks[page_block] = map.m_pblk + map_offset +
 					relative_block;
 				page_block++;
@@ -201,12 +206,16 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		 * done with this page.
 		 */
 		while (page_block < blocks_per_page) {
-			if (block_in_file < last_block) {
 
+			if (block_in_file < last_block) {
+        /*
+         * OyTao: 从@block_in_file ---> last,通过map_blocks查找对应的physical blocks,
+         * 如果没有则退出 flag= 0 
+         */
 				map.m_lblk = block_in_file;
 				map.m_len = last_block - block_in_file;
-
 				if (ext4_map_blocks(NULL, inode, &map, 0) < 0) {
+
 				set_error_page:
 					SetPageError(page);
 					zero_user_segment(page, 0,
@@ -216,20 +225,30 @@ int ext4_mpage_readpages(struct address_space *mapping,
 				}
 			}
 
+      /* OyTao: block_in_file --> last没有mapped  */
 			if ((map.m_flags & EXT4_MAP_MAPPED) == 0) {
 				fully_mapped = 0;
+        /* OyTao: first_hole初始化为block_per_page */
 				if (first_hole == blocks_per_page)
 					first_hole = page_block;
 				page_block++;
 				block_in_file++;
 				continue;
 			}
+
+      /* OyTao: 如果此时map_mapped,与上次ext4_map_blocks不一致 */
 			if (first_hole != blocks_per_page)
 				goto confused;		/* hole -> non-hole */
 
 			/* Contiguous blocks? */
+      /* OyTao: TODO */
 			if (page_block && blocks[page_block-1] != map.m_pblk-1)
 				goto confused;
+
+      /* 
+       * OyTao: 此时，map.flags & EXT4_MAP_MAPPED,所以为当前paged的blocks获取对应的physical
+       * blocks address。
+       */
 			for (relative_block = 0; ; relative_block++) {
 				if (relative_block == map.m_len) {
 					/* needed? */
@@ -242,17 +261,30 @@ int ext4_mpage_readpages(struct address_space *mapping,
 				block_in_file++;
 			}
 		}
+
+    /* 
+     * OyTao: first_hole初始话为blocks_per_page,如果不等于，则表示file中有一部分没有
+     * 映射physical blocks,存在空洞
+     */
 		if (first_hole != blocks_per_page) {
+      
+      /* OyTao: 从fist_hole开始到page结束，填写0 */
 			zero_user_segment(page, first_hole << blkbits,
 					  PAGE_SIZE);
+
+      /* OyTao: 如果是整个page hole */
 			if (first_hole == 0) {
 				SetPageUptodate(page);
 				unlock_page(page);
 				goto next_page;
 			}
+
 		} else if (fully_mapped) {
+      /* OyTao:如果page都已经mapped, 则设置mappedTODisk flag */
 			SetPageMappedToDisk(page);
 		}
+
+    /* OyTao: TODO */
 		if (fully_mapped && blocks_per_page == 1 &&
 		    !PageUptodate(page) && cleancache_get_page(page) == 0) {
 			SetPageUptodate(page);
@@ -263,27 +295,38 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		 * This page will go to BIO.  Do we need to send this
 		 * BIO off first?
 		 */
+    /* OyTao:如果当前page所在的第一个block physical address 与上一个page最后block对应的
+     * physical address 不连续，则submit bio 
+     */
 		if (bio && (last_block_in_bio != blocks[0] - 1)) {
 		submit_and_realloc:
 			submit_bio(bio);
 			bio = NULL;
 		}
-		if (bio == NULL) {
-			struct fscrypt_ctx *ctx = NULL;
 
+		if (bio == NULL) {
+      /* OyTao: encrypted features TODO */
+			struct fscrypt_ctx *ctx = NULL;
 			if (ext4_encrypted_inode(inode) &&
 			    S_ISREG(inode->i_mode)) {
 				ctx = fscrypt_get_ctx(inode, GFP_NOFS);
 				if (IS_ERR(ctx))
 					goto set_error_page;
 			}
+
+      /*
+       * OyTao: 分配@nr_pages个page,如果后续的pages在physcial address上连续，则不需要再额外分配
+       * bio,只需要add_pages
+       */ 
 			bio = bio_alloc(GFP_KERNEL,
 				min_t(int, nr_pages, BIO_MAX_PAGES));
+
 			if (!bio) {
 				if (ctx)
 					fscrypt_release_ctx(ctx);
 				goto set_error_page;
 			}
+
 			bio->bi_bdev = bdev;
 			bio->bi_iter.bi_sector = blocks[0] << (blkbits - 9);
 			bio->bi_end_io = mpage_end_io;
@@ -292,16 +335,21 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		}
 
 		length = first_hole << blkbits;
+
 		if (bio_add_page(bio, page, length, 0) < length)
 			goto submit_and_realloc;
 
+    /* OyTao: TODO BOUNDARY_FLAG, 如果有空洞，也需要提交submit bio */
 		if (((map.m_flags & EXT4_MAP_BOUNDARY) &&
 		     (relative_block == map.m_len)) ||
 		    (first_hole != blocks_per_page)) {
 			submit_bio(bio);
 			bio = NULL;
 		} else
+      /* OyTao: @last_block_in_bio */
 			last_block_in_bio = blocks[blocks_per_page - 1];
+
+    /* OyTao: 当前Page已经处理完成 */
 		goto next_page;
 
 	confused:
@@ -309,6 +357,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 			submit_bio(bio);
 			bio = NULL;
 		}
+
 		if (!PageUptodate(page))
 			block_read_full_page(page, ext4_get_block);
 		else
@@ -318,6 +367,7 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		if (pages)
 			put_page(page);
 	}
+
 
 	BUG_ON(pages && !list_empty(pages));
 	if (bio)

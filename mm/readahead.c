@@ -147,6 +147,7 @@ out:
  *
  * Returns the number of pages requested, or the maximum amount of I/O allowed.
  */
+/* OyTao: */
 int __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 			pgoff_t offset, unsigned long nr_to_read,
 			unsigned long lookahead_size)
@@ -207,6 +208,7 @@ int __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 		 */
 		if (page_idx == nr_to_read - lookahead_size)
 			SetPageReadahead(page);
+
 		ret++;
 	}
 
@@ -218,7 +220,9 @@ int __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 	/* OyTao: 从磁盘上读取数据 */
 	if (ret)
 		read_pages(mapping, filp, &page_pool, ret, gfp_mask);
+
 	BUG_ON(!list_empty(&page_pool));
+
 out:
 	return ret;
 }
@@ -233,14 +237,18 @@ int force_page_cache_readahead(struct address_space *mapping, struct file *filp,
 	if (unlikely(!mapping->a_ops->readpage && !mapping->a_ops->readpages))
 		return -EINVAL;
 
+  /* OyTao: 确认要读的page numbers */
 	nr_to_read = min(nr_to_read, inode_to_bdi(mapping->host)->ra_pages);
+
 	while (nr_to_read) {
 		int err;
 
+    /* OyTao: max read 2M/4K = 512 个pages */
 		unsigned long this_chunk = (2 * 1024 * 1024) / PAGE_SIZE;
 
 		if (this_chunk > nr_to_read)
 			this_chunk = nr_to_read;
+
 		err = __do_page_cache_readahead(mapping, filp,
 						offset, this_chunk, 0);
 		if (err < 0)
@@ -249,6 +257,7 @@ int force_page_cache_readahead(struct address_space *mapping, struct file *filp,
 		offset += this_chunk;
 		nr_to_read -= this_chunk;
 	}
+
 	return 0;
 }
 
@@ -534,7 +543,7 @@ readit:
  */
 
 /*
- * OyTao: @offset:是page的index
+ * OyTao: @offset:是page的index, @req_size是请求的page数目
  */
 void page_cache_sync_readahead(struct address_space *mapping,
 			       struct file_ra_state *ra, struct file *filp,

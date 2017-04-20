@@ -252,6 +252,7 @@ struct page *pagecache_get_page(struct address_space *mapping, pgoff_t offset,
  *
  * Otherwise, %NULL is returned.
  */
+/* OYtao: 从pagecache中查找对应的page 只是inc ref count, 并没有lock page  */ 
 static inline struct page *find_get_page(struct address_space *mapping,
 					pgoff_t offset)
 {
