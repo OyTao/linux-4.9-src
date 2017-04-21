@@ -241,13 +241,13 @@ int ext4_mpage_readpages(struct address_space *mapping,
 				goto confused;		/* hole -> non-hole */
 
 			/* Contiguous blocks? */
-      /* OyTao: TODO */
+      /* OyTao: 如果一个page内部的block不连续， 则submit 之前的bio */
 			if (page_block && blocks[page_block-1] != map.m_pblk-1)
 				goto confused;
 
       /* 
        * OyTao: 此时，map.flags & EXT4_MAP_MAPPED,所以为当前paged的blocks获取对应的physical
-       * blocks address。
+       * blocks address。并且与之前的block在physical address上连续。
        */
 			for (relative_block = 0; ; relative_block++) {
 				if (relative_block == map.m_len) {

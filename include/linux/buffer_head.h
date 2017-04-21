@@ -302,7 +302,10 @@ void buffer_init(void);
  */
 
 /*
- * OyTao:
+ * OyTao: 将page设置private flag,表示拥有buffer head，同时将buffer head
+ * 设置为page private value.
+ *
+ * 同时需要inc page ref count。
  */
 static inline void attach_page_buffers(struct page *page,
 		struct buffer_head *head)

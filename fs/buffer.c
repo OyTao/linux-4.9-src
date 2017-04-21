@@ -1678,16 +1678,24 @@ void create_empty_buffers(struct page *page,
 {
 	struct buffer_head *bh, *head, *tail;
 
+  /* OyTao: 分配page的所有的buffer head */
 	head = alloc_page_buffers(page, blocksize, 1);
 	bh = head;
+
 	do {
 		bh->b_state |= b_state;
 		tail = bh;
 		bh = bh->b_this_page;
 	} while (bh);
+
 	tail->b_this_page = head;
 
 	spin_lock(&page->mapping->private_lock);
+
+  /*
+   * OyTao:如果page是uptodate或者Dirty,则对应的所有的buffer head
+   * 状态都设置为与page一致
+   */
 	if (PageUptodate(page) || PageDirty(page)) {
 		bh = head;
 		do {
@@ -1697,9 +1705,14 @@ void create_empty_buffers(struct page *page,
 				set_buffer_uptodate(bh);
 			bh = bh->b_this_page;
 		} while (bh != head);
+
 	}
+
+  /* OyTao: 设置page private 为buffer head，同时inc ref cnt. */
 	attach_page_buffers(page, head);
+
 	spin_unlock(&page->mapping->private_lock);
+
 }
 EXPORT_SYMBOL(create_empty_buffers);
 
@@ -2338,6 +2351,11 @@ EXPORT_SYMBOL(block_is_partially_uptodate);
  * set/clear_buffer_uptodate() functions propagate buffer state into the
  * page struct once IO has completed.
  */
+
+/* OyTao: 1) 调用者必须hold page lock
+ *
+ *
+ */
 int block_read_full_page(struct page *page, get_block_t *get_block)
 {
 	struct inode *inode = page->mapping->host;
@@ -2347,6 +2365,10 @@ int block_read_full_page(struct page *page, get_block_t *get_block)
 	int nr, i;
 	int fully_mapped = 1;
 
+  /*
+   * OyTao: 为page创建对应的buffer head,同时根据pgae状态设置bufferhead状态，
+   * 将buffer head与page关联起来
+   */
 	head = create_page_buffers(page, inode, 0);
 	blocksize = head->b_size;
 	bbits = block_size_bits(blocksize);
@@ -2371,12 +2393,14 @@ int block_read_full_page(struct page *page, get_block_t *get_block)
 				if (err)
 					SetPageError(page);
 			}
+
 			if (!buffer_mapped(bh)) {
 				zero_user(page, i * blocksize, blocksize);
 				if (!err)
 					set_buffer_uptodate(bh);
 				continue;
 			}
+
 			/*
 			 * get_block() might have updated the buffer
 			 * synchronously
@@ -2384,6 +2408,8 @@ int block_read_full_page(struct page *page, get_block_t *get_block)
 			if (buffer_uptodate(bh))
 				continue;
 		}
+
+    /* OyTao: 如果buffer head not uptodate， 则加入到arr[]中。 */
 		arr[nr++] = bh;
 	} while (i++, iblock++, (bh = bh->b_this_page) != head);
 
