@@ -4758,7 +4758,7 @@ got_allocated_blocks:
 	if (allocated > map->m_len)
 		allocated = map->m_len;
 
-	/* OyTao: 设置map的flag */
+	/* OyTao: 设置map的flag(BH_New) */
 	map->m_flags |= EXT4_MAP_NEW;
 
 	/*

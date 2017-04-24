@@ -176,6 +176,9 @@ void end_buffer_read_sync(struct buffer_head *bh, int uptodate)
 }
 EXPORT_SYMBOL(end_buffer_read_sync);
 
+/*
+ * OyTao: 
+ */
 void end_buffer_write_sync(struct buffer_head *bh, int uptodate)
 {
 	if (uptodate) {
@@ -2026,6 +2029,9 @@ void page_zero_new_buffers(struct page *page, unsigned from, unsigned to)
 }
 EXPORT_SYMBOL(page_zero_new_buffers);
 
+/*
+ * OyTao: TODO
+ */
 static void
 iomap_to_bh(struct inode *inode, sector_t block, struct buffer_head *bh,
 		struct iomap *iomap)
@@ -2053,6 +2059,7 @@ iomap_to_bh(struct inode *inode, sector_t block, struct buffer_head *bh,
 		    (offset >= i_size_read(inode)))
 			set_buffer_new(bh);
 		break;
+
 	case IOMAP_DELALLOC:
 		if (!buffer_uptodate(bh) ||
 		    (offset >= i_size_read(inode)))
@@ -2061,6 +2068,7 @@ iomap_to_bh(struct inode *inode, sector_t block, struct buffer_head *bh,
 		set_buffer_mapped(bh);
 		set_buffer_delay(bh);
 		break;
+
 	case IOMAP_UNWRITTEN:
 		/*
 		 * For unwritten regions, we always need to ensure that
@@ -2070,6 +2078,7 @@ iomap_to_bh(struct inode *inode, sector_t block, struct buffer_head *bh,
 		set_buffer_new(bh);
 		set_buffer_unwritten(bh);
 		/* FALLTHRU */
+
 	case IOMAP_MAPPED:
 		if (offset >= i_size_read(inode))
 			set_buffer_new(bh);
@@ -2104,12 +2113,14 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 
 	block = (sector_t)page->index << (PAGE_SHIFT - bbits);
 
+  /* OyTao: 遍历page所有的buffer head */
 	for(bh = head, block_start = 0; bh != head || !block_start;
 	    block++, block_start=block_end, bh = bh->b_this_page) {
 		block_end = block_start + blocksize;
 
     /* OyTao: 如果当前@bh与(from, to)没有重叠部分 */
 		if (block_end <= from || block_start >= to) {
+
       /* OyTao: 为什么page是uptodate状态，buffer head却不是uptodate状态 */
 			if (PageUptodate(page)) {
 				if (!buffer_uptodate(bh))
@@ -2124,17 +2135,21 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
     /* OyTao:如果对应的buffer head还没有mapped */
 		if (!buffer_mapped(bh)) {
 			WARN_ON(bh->b_size != blocksize);
+
+      /* OyTao: 获取block对应的physical block */
 			if (get_block) {
 				err = get_block(inode, block, bh, 1);
 				if (err)
 					break;
 			} else {
+        /* OyTao: TODO */
 				iomap_to_bh(inode, block, bh, iomap);
 			}
 
 			if (buffer_new(bh)) {
 				unmap_underlying_metadata(bh->b_bdev,
 							bh->b_blocknr);
+
 				if (PageUptodate(page)) {
 					clear_buffer_new(bh);
 					set_buffer_uptodate(bh);
@@ -2142,6 +2157,7 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 					continue;
 				}
 
+        /* OyTao:如果buffer head之前没有对应的数据，则只需要填充0 */
 				if (block_end > to || block_start < from)
 					zero_user_segments(page,
 						to, block_end,
@@ -2157,6 +2173,12 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 			continue; 
 		}
 
+    /*
+     * OyTao: 如果buffer head 不包含最新的数据，
+     * 并且不是delayed, 以及unwritten的状态，
+     * 并且用户要写的不是全部的buffer head,
+     * 则需要读对应的buffer head
+     */
 		if (!buffer_uptodate(bh) && !buffer_delay(bh) &&
 		    !buffer_unwritten(bh) &&
 		     (block_start < from || block_end > to)) {
@@ -2164,14 +2186,17 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 			*wait_bh++=bh;
 		}
 	}
+
 	/*
 	 * If we issued read requests - let them complete.
 	 */
+  /* OyTao: 等待需要写的partial buffer(最多2个) read 完成 */
 	while(wait_bh > wait) {
 		wait_on_buffer(*--wait_bh);
 		if (!buffer_uptodate(*wait_bh))
 			err = -EIO;
 	}
+
 	if (unlikely(err))
 		page_zero_new_buffers(page, from, to);
 	return err;
@@ -2182,8 +2207,15 @@ int __block_write_begin(struct page *page, loff_t pos, unsigned len,
 {
 	return __block_write_begin_int(page, pos, len, get_block, NULL);
 }
+
 EXPORT_SYMBOL(__block_write_begin);
 
+/*
+ * OyTao: 遍历page的所有buffer heads. 对于(from, to)有overlap的
+ * buffer heads,设置对应的buffer uptodate，并且mark buffer dirty.
+ *
+ * 如果page中所有的buffer heads都已经uptodate, 设置page uptodate. 
+ */
 static int __block_commit_write(struct inode *inode, struct page *page,
 		unsigned from, unsigned to)
 {
@@ -2198,13 +2230,19 @@ static int __block_commit_write(struct inode *inode, struct page *page,
 	block_start = 0;
 	do {
 		block_end = block_start + blocksize;
+    /* OyTao: 如果(from, to)与当前的@bh没有overlap */
 		if (block_end <= from || block_start >= to) {
 			if (!buffer_uptodate(bh))
 				partial = 1;
 		} else {
+      /* OyTao: 与当前的@bh有overlap的buffer head 
+       * 设置uptodate status.
+       * 同时设置buffer dirty
+       */
 			set_buffer_uptodate(bh);
 			mark_buffer_dirty(bh);
 		}
+
 		clear_buffer_new(bh);
 
 		block_start = block_end;
@@ -2278,6 +2316,7 @@ int block_write_end(struct file *file, struct address_space *mapping,
 
 		page_zero_new_buffers(page, start+copied, start+len);
 	}
+
 	flush_dcache_page(page);
 
 	/* This could be a short (even 0-length) commit */
@@ -3320,11 +3359,21 @@ void ll_rw_block(int op, int op_flags,  int nr, struct buffer_head *bhs[])
 {
 	int i;
 
+  /*
+   * OyTao: 遍历所有的@bhs中的buffer head，尝试lock, 如果不可以lock,则不处理该bh.
+   * 如果op是write,并且buffer head是dirty状态，同时clear dirty状态，
+   * 避免多个读取操作, 同时需要submit_bh, lock buffer head, 
+   * 在b_end_io的函数中，设置buffer head uptodate,同时unlock buffer head.
+   *
+   * 如果op是read，并且不是uptodate状态，则直接submit_bh.
+   * 在b_end_io的函数中，设置buffer head uptodate, 同时unlock buffer head.
+   */ 
 	for (i = 0; i < nr; i++) {
 		struct buffer_head *bh = bhs[i];
 
 		if (!trylock_buffer(bh))
 			continue;
+
 		if (op == WRITE) {
 			if (test_clear_buffer_dirty(bh)) {
 				bh->b_end_io = end_buffer_write_sync;
@@ -3340,6 +3389,7 @@ void ll_rw_block(int op, int op_flags,  int nr, struct buffer_head *bhs[])
 				continue;
 			}
 		}
+
 		unlock_buffer(bh);
 	}
 }

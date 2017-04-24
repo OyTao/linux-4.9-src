@@ -1219,6 +1219,12 @@ static int ext4_block_write_begin(struct page *page, loff_t pos, unsigned len,
 }
 #endif
 
+/* OyTao: 首先从pagecache中获取对应的page(如果没有则创建)
+ * 1) locked page.
+ * 2) 对于(from, to)是partial buffer heads, 则需要在__block_write_begin
+ *    中需要读取partial buffer heads.(最多2个).
+ *
+ */ 
 static int ext4_write_begin(struct file *file, struct address_space *mapping,
 			    loff_t pos, unsigned len, unsigned flags,
 			    struct page **pagep, void **fsdata)
@@ -1282,7 +1288,9 @@ retry_journal:
 		return PTR_ERR(handle);
 	}
 
+  /* OyTao: lock page */
 	lock_page(page);
+
 	if (page->mapping != mapping) {
 		/* The page got truncated from under us */
 		unlock_page(page);
@@ -1308,12 +1316,14 @@ retry_journal:
 	else
 		ret = __block_write_begin(page, pos, len, ext4_get_block);
 #endif
+
 	if (!ret && ext4_should_journal_data(inode)) {
 		ret = ext4_walk_page_buffers(handle, page_buffers(page),
 					     from, to, NULL,
 					     do_journal_get_write_access);
 	}
 
+  /* OyTao: 异常处理 TODO */
 	if (ret) {
 		unlock_page(page);
 		/*
@@ -1346,6 +1356,8 @@ retry_journal:
 		put_page(page);
 		return ret;
 	}
+
+
 	*pagep = page;
 	return ret;
 }
@@ -1382,6 +1394,8 @@ static int ext4_write_end(struct file *file,
 	int i_size_changed = 0;
 
 	trace_ext4_write_end(inode, pos, len, copied);
+
+  /* OyTao: inline data 处理 */
 	if (ext4_has_inline_data(inode)) {
 		ret = ext4_write_inline_data_end(inode, pos, len,
 						 copied, page);
@@ -3718,6 +3732,9 @@ static const struct address_space_operations ext4_journalled_aops = {
 	.error_remove_page	= generic_error_remove_page,
 };
 
+/*
+ * OyTao: delayed allocated operations (延迟分配 features)
+ */
 static const struct address_space_operations ext4_da_aops = {
 	.readpage		= ext4_readpage,
 	.readpages		= ext4_readpages,
