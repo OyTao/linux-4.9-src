@@ -3533,6 +3533,12 @@ static void ext4_mb_normalize_group_request(struct ext4_allocation_context *ac)
  * Normalization means making request better in terms of
  * size and alignment
  */
+/*
+ * OyTao:对分配的请求进行一致化处理(处理start,以及len),同时确保修正后的
+ * (start, start + len)不会与现在有的PAs有overlap， 不会与ar之前的left, right有overlap。
+ * 如果有overlap, 需要减去overlap部分。
+ * 新的(start, len)存在ac->ac_g_ex中。
+ */
 static noinline_for_stack void
 ext4_mb_normalize_request(struct ext4_allocation_context *ac,
 				struct ext4_allocation_request *ar)
@@ -4253,7 +4259,6 @@ ext4_mb_new_inode_pa(struct ext4_allocation_context *ac)
 		int offs;
 
 		/* OyTao: 因为分配的长度大于需求的长度。ac_b_ex.fe_len > ac_o_ex.fe_len
-		 * ac_b_ex.fe_logical == ac_g_ex.fe_logical;
 		 *
 		 * wins = ac_b_ex.fe_end - ac_b_ex.fe_logical - ac_o_ex.fe_led + ac_o_ex.fe_logcal
 		 *      = ac_o_ex.fe_logical - ac_b_ex.fe_logical + ac_b_ex.fe_end - ac_o_ex.fe_len

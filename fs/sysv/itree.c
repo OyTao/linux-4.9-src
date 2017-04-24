@@ -217,6 +217,7 @@ reread:
 	partial = get_branch(inode, depth, offsets, chain, &err);
 	read_unlock(&pointers_lock);
 
+
 	/* Simplest case - block found, no allocation needed */
 	if (!partial) {
 got_it:

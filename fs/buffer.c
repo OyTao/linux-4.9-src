@@ -296,6 +296,9 @@ static void free_more_memory(void)
  * I/O completion handler for block_read_full_page() - pages
  * which come unlocked at the end of I/O.
  */
+/*
+ * OyTao: 在block_read_full_page之前，已经hold page lock.
+ */
 static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 {
 	unsigned long flags;
@@ -306,6 +309,7 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 
 	BUG_ON(!buffer_async_read(bh));
 
+  /* OyTao: 当前还在buffer head的lock */
 	page = bh->b_page;
 	if (uptodate) {
 		set_buffer_uptodate(bh);
@@ -322,19 +326,28 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 	 */
 	first = page_buffers(page);
 	local_irq_save(flags);
+
+  /* OyTao:在page first buffer head BH_Uptodate_Lock的保护下，
+   * 首先清除掉当前buffer head的buffer async read bit. unlock bh.
+   * 同时检查page所有的buffer head是否都已经update, 如果都已经update,
+   * 设置page update.
+   */
 	bit_spin_lock(BH_Uptodate_Lock, &first->b_state);
 	clear_buffer_async_read(bh);
 	unlock_buffer(bh);
+
 	tmp = bh;
 	do {
 		if (!buffer_uptodate(tmp))
 			page_uptodate = 0;
+
 		if (buffer_async_read(tmp)) {
 			BUG_ON(!buffer_locked(tmp));
 			goto still_busy;
 		}
 		tmp = tmp->b_this_page;
 	} while (tmp != bh);
+
 	bit_spin_unlock(BH_Uptodate_Lock, &first->b_state);
 	local_irq_restore(flags);
 
@@ -344,6 +357,12 @@ static void end_buffer_async_read(struct buffer_head *bh, int uptodate)
 	 */
 	if (page_uptodate && !PageError(page))
 		SetPageUptodate(page);
+
+  /*
+   * OyTao:只有所有的buffer head都已经uptodate并且clear buffer async read bit,
+   * 并且unlock buffer head，才会unlock page.
+   * lock page是在ext4_mpage_readpages调用block_read_full_page之前调用的。
+   */
 	unlock_page(page);
 	return;
 
@@ -1761,6 +1780,9 @@ static inline int block_size_bits(unsigned int blocksize)
 	return ilog2(blocksize);
 }
 
+/*
+ * OyTao: 调用者必须hold page lock
+ */
 static struct buffer_head *create_page_buffers(struct page *page, struct inode *inode, unsigned int b_state)
 {
 	BUG_ON(!PageLocked(page));
@@ -2075,6 +2097,7 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 	BUG_ON(to > PAGE_SIZE);
 	BUG_ON(from > to);
 
+  /* OyTao:创建page所包含的buffer heads */
 	head = create_page_buffers(page, inode, 0);
 	blocksize = head->b_size;
 	bbits = block_size_bits(blocksize);
@@ -2084,7 +2107,10 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 	for(bh = head, block_start = 0; bh != head || !block_start;
 	    block++, block_start=block_end, bh = bh->b_this_page) {
 		block_end = block_start + blocksize;
+
+    /* OyTao: 如果当前@bh与(from, to)没有重叠部分 */
 		if (block_end <= from || block_start >= to) {
+      /* OyTao: 为什么page是uptodate状态，buffer head却不是uptodate状态 */
 			if (PageUptodate(page)) {
 				if (!buffer_uptodate(bh))
 					set_buffer_uptodate(bh);
@@ -2095,6 +2121,7 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 		if (buffer_new(bh))
 			clear_buffer_new(bh);
 
+    /* OyTao:如果对应的buffer head还没有mapped */
 		if (!buffer_mapped(bh)) {
 			WARN_ON(bh->b_size != blocksize);
 			if (get_block) {
@@ -2123,6 +2150,7 @@ int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
 			}
 		}
 
+    /* OyTao: TODO */
 		if (PageUptodate(page)) {
 			if (!buffer_uptodate(bh))
 				set_buffer_uptodate(bh);
@@ -2379,6 +2407,7 @@ int block_read_full_page(struct page *page, get_block_t *get_block)
 	nr = 0;
 	i = 0;
 
+  /* OyTao: 循环处理每一个buffer head of page */
 	do {
 		if (buffer_uptodate(bh))
 			continue;
@@ -2389,11 +2418,13 @@ int block_read_full_page(struct page *page, get_block_t *get_block)
 			fully_mapped = 0;
 			if (iblock < lblock) {
 				WARN_ON(bh->b_size != blocksize);
+        /* OyTao: 得到对应的physical address */
 				err = get_block(inode, iblock, bh, 0);
 				if (err)
 					SetPageError(page);
 			}
 
+      /* OyTao: 如果仍然没有mapped, 则需要填充 0 */
 			if (!buffer_mapped(bh)) {
 				zero_user(page, i * blocksize, blocksize);
 				if (!err)
@@ -2428,6 +2459,9 @@ int block_read_full_page(struct page *page, get_block_t *get_block)
 	}
 
 	/* Stage two: lock the buffers */
+  /* OyTao: 需要对所有noupdatedata的buffer head下发读请求，需要lock buffer head.
+   * 设置buffer async read bit.
+   */
 	for (i = 0; i < nr; i++) {
 		bh = arr[i];
 		lock_buffer(bh);

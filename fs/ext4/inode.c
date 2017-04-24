@@ -584,6 +584,8 @@ int ext4_map_blocks(handle_t *handle, struct inode *inode,
 
 		status = map->m_flags & EXT4_MAP_UNWRITTEN ?
 				EXTENT_STATUS_UNWRITTEN : EXTENT_STATUS_WRITTEN;
+
+    /* OyTao: TODO */
 		if (!(flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE) &&
 		    !(status & EXTENT_STATUS_WRITTEN) &&
 		    ext4_find_delalloc_range(inode, map->m_lblk,
@@ -594,6 +596,8 @@ int ext4_map_blocks(handle_t *handle, struct inode *inode,
 		if (ret < 0)
 			retval = ret;
 	}
+
+  /* OyTao: TODO */
 	up_read((&EXT4_I(inode)->i_data_sem));
 
 found:
@@ -757,6 +761,9 @@ out_sem:
  * Update EXT4_MAP_FLAGS in bh->b_state. For buffer heads attached to pages
  * we have to be careful as someone else may be manipulating b_state as well.
  */
+/* 
+ * OyTao: TODO 
+ */
 static void ext4_update_bh_state(struct buffer_head *bh, unsigned long flags)
 {
 	unsigned long old_state;
@@ -781,6 +788,10 @@ static void ext4_update_bh_state(struct buffer_head *bh, unsigned long flags)
 		 cmpxchg(&bh->b_state, old_state, new_state) != old_state));
 }
 
+/*
+ * OyTao: 
+ * 如果得到对应的physical block, 则返回0.同时设置bh已经buffer mapped bit of state.
+ */
 static int _ext4_get_block(struct inode *inode, sector_t iblock,
 			   struct buffer_head *bh, int flags)
 {
@@ -795,6 +806,7 @@ static int _ext4_get_block(struct inode *inode, sector_t iblock,
 
 	ret = ext4_map_blocks(ext4_journal_current_handle(), inode, &map,
 			      flags);
+  
 	if (ret > 0) {
 		map_bh(bh, inode->i_sb, map.m_pblk);
 		ext4_update_bh_state(bh, map.m_flags);
@@ -1224,11 +1236,15 @@ static int ext4_write_begin(struct file *file, struct address_space *mapping,
 	 * Reserve one block more for addition to orphan list in case
 	 * we allocate blocks but write fails for some reason
 	 */
+  /* OyTao: TODO */
 	needed_blocks = ext4_writepage_trans_blocks(inode) + 1;
 	index = pos >> PAGE_SHIFT;
 	from = pos & (PAGE_SIZE - 1);
 	to = from + len;
 
+  /* 
+   * OyTao: 是否可以inline data
+   */
 	if (ext4_test_inode_state(inode, EXT4_STATE_MAY_INLINE_DATA)) {
 		ret = ext4_try_to_write_inline_data(mapping, inode, pos, len,
 						    flags, pagep);
@@ -1246,10 +1262,18 @@ static int ext4_write_begin(struct file *file, struct address_space *mapping,
 	 * the page (if needed) without using GFP_NOFS.
 	 */
 retry_grab:
+  /*
+   * OyTao: 从page cache中获取对应@index的page,如果不存在，创建新的，加入到
+   * page cache中。
+   * 同时lock page, inc ref count.
+   */
 	page = grab_cache_page_write_begin(mapping, index, flags);
 	if (!page)
 		return -ENOMEM;
+
+  /* OyTao: unlock page 为什么此处需要unlock,是否与journal start有关 */
 	unlock_page(page);
+
 
 retry_journal:
 	handle = ext4_journal_start(inode, EXT4_HT_WRITE_PAGE, needed_blocks);
@@ -1266,6 +1290,7 @@ retry_journal:
 		ext4_journal_stop(handle);
 		goto retry_grab;
 	}
+
 	/* In case writeback began while the page was unlocked */
 	wait_for_stable_page(page);
 
@@ -2992,8 +3017,10 @@ retry_journal:
 	ret = ext4_block_write_begin(page, pos, len,
 				     ext4_da_get_block_prep);
 #else
+  /* OyTao: TODO */
 	ret = __block_write_begin(page, pos, len, ext4_da_get_block_prep);
 #endif
+
 	if (ret < 0) {
 		unlock_page(page);
 		ext4_journal_stop(handle);

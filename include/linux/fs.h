@@ -3040,7 +3040,7 @@ static inline bool io_is_direct(struct file *filp)
  *  DSYNC与SYNC的区别。
  *  DSYNC (Data SYNC) TODO
  */
-static inline int iocb_flags(struct file *file)
+static inline int gocb_flags(struct file *file)
 {
 	int res = 0;
 	if (file->f_flags & O_APPEND)

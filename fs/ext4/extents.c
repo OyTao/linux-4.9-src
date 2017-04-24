@@ -4846,6 +4846,7 @@ got_allocated_blocks:
 		ext4_update_inode_fsync_trans(handle, inode, 1);
 	else
 		ext4_update_inode_fsync_trans(handle, inode, 0);
+  
 out:
 	if (allocated > map->m_len)
 		allocated = map->m_len;

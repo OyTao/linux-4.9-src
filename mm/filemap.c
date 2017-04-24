@@ -1307,8 +1307,10 @@ no_page:
 	/* OyTao: 如果是Create标记，则创建新的page */
 	if (!page && (fgp_flags & FGP_CREAT)) {
 		int err;
+
 		if ((fgp_flags & FGP_WRITE) && mapping_cap_account_dirty(mapping))
 			gfp_mask |= __GFP_WRITE;
+
 		if (fgp_flags & FGP_NOFS)
 			gfp_mask &= ~__GFP_FS;
 
@@ -1825,7 +1827,7 @@ find_page:
 				goto no_cached_page;
 		}
 
-
+    /* OyTao: TODO */
 		if (PageReadahead(page)) {
 			page_cache_async_readahead(mapping,
 					ra, filp, page,
@@ -1839,27 +1841,35 @@ find_page:
 			 * serialisations and why it's safe.
 			 */
 			error = wait_on_page_locked_killable(page);
+
 			if (unlikely(error))
 				goto readpage_error;
+
 			if (PageUptodate(page))
 				goto page_ok;
 
 			if (inode->i_blkbits == PAGE_SHIFT ||
 					!mapping->a_ops->is_partially_uptodate)
 				goto page_not_up_to_date;
+
 			/* pipes can't handle partially uptodate pages */
 			if (unlikely(iter->type & ITER_PIPE))
 				goto page_not_up_to_date;
+
 			if (!trylock_page(page))
 				goto page_not_up_to_date;
+
 			/* Did it get truncated before we got the lock? */
 			if (!page->mapping)
 				goto page_not_up_to_date_locked;
+
 			if (!mapping->a_ops->is_partially_uptodate(page,
 							offset, iter->count))
 				goto page_not_up_to_date_locked;
+
 			unlock_page(page);
 		}
+
 page_ok:
 		/*
 		 * i_size must be checked after we know the page is Uptodate.
@@ -1872,12 +1882,15 @@ page_ok:
 
 		isize = i_size_read(inode);
 		end_index = (isize - 1) >> PAGE_SHIFT;
+    /* OyTao: 如果查出了文件的大小，则put page */
 		if (unlikely(!isize || index > end_index)) {
 			put_page(page);
 			goto out;
 		}
 
 		/* nr is the maximum number of bytes to copy from this page */
+
+    /* OyTao:如果是最后一个page, 这些修正nr最大的长度 */
 		nr = PAGE_SIZE;
 		if (index == end_index) {
 			nr = ((isize - 1) & ~PAGE_MASK) + 1;
@@ -1886,6 +1899,8 @@ page_ok:
 				goto out;
 			}
 		}
+
+    /* OyTao: 当前page可以读的大小(bytes) */
 		nr = nr - offset;
 
 		/* If users can be writing to this page using arbitrary
@@ -1908,6 +1923,7 @@ page_ok:
 		 * now we can copy it to user space...
 		 */
 
+    /* OyTao:将数据拷贝到iter中 */
 		ret = copy_page_to_iter(page, offset, nr, iter);
 		offset += ret;
 		index += offset >> PAGE_SHIFT;
@@ -2793,11 +2809,17 @@ struct page *grab_cache_page_write_begin(struct address_space *mapping,
 					pgoff_t index, unsigned flags)
 {
 	struct page *page;
+  /* OyTao:
+   * 1. hold page lock. 
+   * 2. 如果page cache中没有对应的page, create page .
+   * 3. 
+   */
 	int fgp_flags = FGP_LOCK|FGP_WRITE|FGP_CREAT;
 
 	if (flags & AOP_FLAG_NOFS)
 		fgp_flags |= FGP_NOFS;
 
+  /* OyTao: 获取对应的page,如果需要等待writeback处理完，需要wait_for_stable_page */
 	page = pagecache_get_page(mapping, index, fgp_flags,
 			mapping_gfp_mask(mapping));
 	if (page)
@@ -2935,6 +2957,7 @@ ssize_t __generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	if (err)
 		goto out;
 
+  /* OyTao: direct write 模式 */
 	if (iocb->ki_flags & IOCB_DIRECT) {
 		loff_t pos, endbyte;
 
@@ -2981,6 +3004,7 @@ ssize_t __generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			 */
 		}
 	} else {
+    /* OyTao: 非direct write 模式 */
 		written = generic_perform_write(file, from, iocb->ki_pos);
 		if (likely(written > 0))
 			iocb->ki_pos += written;

@@ -98,6 +98,7 @@ static void mpage_end_io(struct bio *bio)
 /*
  * OyTao: 如果是读一个page，则nr_pages = 1, page不为空；
  * 如果nr_pages > 1, 则page = NULL, pages包括多个page.
+ * pages当中包含的pages都没有加入到pagecache中。
  */
 int ext4_mpage_readpages(struct address_space *mapping,
 			 struct list_head *pages, struct page *page,
@@ -142,6 +143,8 @@ int ext4_mpage_readpages(struct address_space *mapping,
 
 			/*
 			 * OyTao: 将该page添加到page cache中。hold pages.
+       * 如果返回值不等于0,则表示已经有page加入到page cache 中。
+       * 否则，page locked, 并且加入到了page cache中。
 			 */
 			if (add_to_page_cache_lru(page, mapping, page->index,
 				  readahead_gfp_mask(mapping)))

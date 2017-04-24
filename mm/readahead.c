@@ -544,6 +544,8 @@ readit:
 
 /*
  * OyTao: @offset:是page的index, @req_size是请求的page数目
+ * 不管是会否需要预读，该函数都会讲要获取的pages都加入到page cache中。
+ *
  */
 void page_cache_sync_readahead(struct address_space *mapping,
 			       struct file_ra_state *ra, struct file *filp,

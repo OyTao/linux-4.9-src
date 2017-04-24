@@ -97,6 +97,7 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	int overwrite = 0;
 	ssize_t ret;
 
+  /* OyTao: lock inode */
 	inode_lock(inode);
 
 	ret = generic_write_checks(iocb, from);
