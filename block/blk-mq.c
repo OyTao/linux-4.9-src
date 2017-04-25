@@ -1373,6 +1373,7 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 			goto done;
 		if (!blk_mq_direct_issue_request(old_rq, &cookie))
 			goto done;
+
 		blk_mq_insert_request(old_rq, false, true, true);
 		goto done;
 	}
@@ -1387,6 +1388,7 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 run_queue:
 		blk_mq_run_hw_queue(data.hctx, !is_sync || is_flush_fua);
 	}
+
 	blk_mq_put_ctx(data.ctx);
 done:
 	return cookie;

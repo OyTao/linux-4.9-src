@@ -1410,6 +1410,7 @@ static int ext4_write_end(struct file *file,
 	 * page writeout could otherwise come in and zero beyond i_size.
 	 */
 	i_size_changed = ext4_update_inode_size(inode, pos + copied);
+
 	unlock_page(page);
 	put_page(page);
 
@@ -1430,6 +1431,7 @@ static int ext4_write_end(struct file *file,
 		 * inode->i_size. So truncate them
 		 */
 		ext4_orphan_add(handle, inode);
+
 errout:
 	ret2 = ext4_journal_stop(handle);
 	if (!ret)
@@ -2792,9 +2794,11 @@ static int ext4_writepages(struct address_space *mapping,
 	mpd.inode = inode;
 	mpd.wbc = wbc;
 	ext4_io_submit_init(&mpd.io_submit, wbc);
+
 retry:
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag_pages_for_writeback(mapping, mpd.first_page, mpd.last_page);
+
 	done = false;
 	blk_start_plug(&plug);
 	while (!done && mpd.first_page <= mpd.last_page) {
