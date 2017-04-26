@@ -2182,6 +2182,7 @@ static int mpage_submit_page(struct mpage_da_data *mpd, struct page *page)
 		len = size & ~PAGE_MASK;
 	else
 		len = PAGE_SIZE;
+
 	clear_page_dirty_for_io(page);
 
 	err = ext4_bio_write_page(&mpd->io_submit, page, len, mpd->wbc, false);

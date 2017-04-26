@@ -2749,6 +2749,7 @@ int clear_page_dirty_for_io(struct page *page)
 		 * exclusion.
 		 */
 		wb = unlocked_inode_to_wb_begin(inode, &locked);
+
 		if (TestClearPageDirty(page)) {
 			mem_cgroup_dec_page_stat(page, MEM_CGROUP_STAT_DIRTY);
 			dec_node_page_state(page, NR_FILE_DIRTY);
@@ -2757,8 +2758,10 @@ int clear_page_dirty_for_io(struct page *page)
 			ret = 1;
 		}
 		unlocked_inode_to_wb_end(inode, locked);
+
 		return ret;
 	}
+
 	return TestClearPageDirty(page);
 }
 EXPORT_SYMBOL(clear_page_dirty_for_io);

@@ -3073,11 +3073,13 @@ static int __pci_request_region(struct pci_dev *pdev, int bar,
 		return 0;
 
 	if (pci_resource_flags(pdev, bar) & IORESOURCE_IO) {
+
 		/* OyTao: 处理PCI设备的IO space address */
 		if (!request_region(pci_resource_start(pdev, bar),
 			    pci_resource_len(pdev, bar), res_name))
 			goto err_out;
 	} else if (pci_resource_flags(pdev, bar) & IORESOURCE_MEM) {
+
 		/* OyTao: 处理PCI设备的Memory space address */
 		if (!__request_mem_region(pci_resource_start(pdev, bar),
 					pci_resource_len(pdev, bar), res_name,
