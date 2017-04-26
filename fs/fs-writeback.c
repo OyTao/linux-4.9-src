@@ -1431,8 +1431,10 @@ __writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
 		if (ret == 0)
 			ret = err;
 	}
+
 	trace_writeback_single_inode(inode, wbc, nr_to_write);
 	return ret;
+
 }
 
 /*

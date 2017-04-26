@@ -2162,8 +2162,10 @@ static int ext4_writepage(struct page *page,
 		unlock_page(page);
 		return -ENOMEM;
 	}
+
 	ret = ext4_bio_write_page(&io_submit, page, len, wbc, keep_towrite);
 	ext4_io_submit(&io_submit);
+
 	/* Drop io_end reference we got from init */
 	ext4_put_io_end_defer(io_submit.io_end);
 	return ret;
@@ -2181,6 +2183,7 @@ static int mpage_submit_page(struct mpage_da_data *mpd, struct page *page)
 	else
 		len = PAGE_SIZE;
 	clear_page_dirty_for_io(page);
+
 	err = ext4_bio_write_page(&mpd->io_submit, page, len, mpd->wbc, false);
 	if (!err)
 		mpd->wbc->nr_to_write--;
@@ -2223,6 +2226,7 @@ static bool mpage_add_bh_to_extent(struct mpage_da_data *mpd, ext4_lblk_t lblk,
 		/* So far no extent to map => we write the buffer right away */
 		if (map->m_len == 0)
 			return true;
+
 		return false;
 	}
 
@@ -2280,10 +2284,12 @@ static int mpage_process_page_bufs(struct mpage_da_data *mpd,
 			/* Found extent to map? */
 			if (mpd->map.m_len)
 				return 0;
+
 			/* Everything mapped so far and we hit EOF */
 			break;
 		}
 	} while (lblk++, (bh = bh->b_this_page) != head);
+
 	/* So far everything mapped? Submit the page for IO. */
 	if (mpd->map.m_len == 0) {
 		err = mpage_submit_page(mpd, head->b_page);
@@ -2328,19 +2334,23 @@ static int mpage_map_and_submit_buffers(struct mpage_da_data *mpd)
 	while (start <= end) {
 		nr_pages = pagevec_lookup(&pvec, inode->i_mapping, start,
 					  PAGEVEC_SIZE);
+
 		if (nr_pages == 0)
 			break;
+
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
 
 			if (page->index > end)
 				break;
+
 			/* Up to 'end' pages must be contiguous */
 			BUG_ON(page->index != start);
 			bh = head = page_buffers(page);
 			do {
 				if (lblk < mpd->map.m_lblk)
 					continue;
+
 				if (lblk >= mpd->map.m_lblk + mpd->map.m_len) {
 					/*
 					 * Buffer after end of mapped extent.
@@ -2362,6 +2372,7 @@ static int mpage_map_and_submit_buffers(struct mpage_da_data *mpd)
 						err = 0;
 					return err;
 				}
+
 				if (buffer_delay(bh)) {
 					clear_buffer_delay(bh);
 					bh->b_blocknr = pblock++;
@@ -2375,6 +2386,7 @@ static int mpage_map_and_submit_buffers(struct mpage_da_data *mpd)
 			 * convert potentially unmapped parts of inode.
 			 */
 			mpd->io_submit.io_end->size += PAGE_SIZE;
+
 			/* Page fully mapped - let IO run! */
 			err = mpage_submit_page(mpd, page);
 			if (err < 0) {
@@ -2383,6 +2395,7 @@ static int mpage_map_and_submit_buffers(struct mpage_da_data *mpd)
 			}
 			start++;
 		}
+
 		pagevec_release(&pvec);
 	}
 	/* Extent fully mapped and matches with page boundary. We are done. */
@@ -2417,6 +2430,7 @@ static int mpage_map_one_extent(handle_t *handle, struct mpage_da_data *mpd)
 	get_blocks_flags = EXT4_GET_BLOCKS_CREATE |
 			   EXT4_GET_BLOCKS_METADATA_NOFAIL |
 			   EXT4_GET_BLOCKS_IO_SUBMIT;
+
 	dioread_nolock = ext4_should_dioread_nolock(inode);
 	if (dioread_nolock)
 		get_blocks_flags |= EXT4_GET_BLOCKS_IO_CREATE_EXT;
@@ -2427,6 +2441,7 @@ static int mpage_map_one_extent(handle_t *handle, struct mpage_da_data *mpd)
 	err = ext4_map_blocks(handle, inode, map, get_blocks_flags);
 	if (err < 0)
 		return err;
+
 	if (dioread_nolock && (map->m_flags & EXT4_MAP_UNWRITTEN)) {
 		if (!mpd->io_submit.io_end->handle &&
 		    ext4_handle_valid(handle)) {
@@ -2436,7 +2451,10 @@ static int mpage_map_one_extent(handle_t *handle, struct mpage_da_data *mpd)
 		ext4_set_io_unwritten_flag(inode, mpd->io_submit.io_end);
 	}
 
+
 	BUG_ON(map->m_len == 0);
+
+  /* OyTao: TODO */
 	if (map->m_flags & EXT4_MAP_NEW) {
 		struct block_device *bdev = inode->i_sb->s_bdev;
 		int i;
@@ -2481,6 +2499,8 @@ static int mpage_map_and_submit_extent(handle_t *handle,
 				((loff_t)map->m_lblk) << inode->i_blkbits;
 	do {
 		err = mpage_map_one_extent(handle, mpd);
+
+    /* OyTao: 异常处理 */
 		if (err < 0) {
 			struct super_block *sb = inode->i_sb;
 
@@ -2513,6 +2533,7 @@ static int mpage_map_and_submit_extent(handle_t *handle,
 			*give_up_on_write = true;
 			return err;
 		}
+
 		progress = 1;
 		/*
 		 * Update buffer state, submit mapped pages, and get us new
@@ -2541,6 +2562,7 @@ update_disksize:
 			EXT4_I(inode)->i_disksize = disksize;
 		err2 = ext4_mark_inode_dirty(handle, inode);
 		up_write(&EXT4_I(inode)->i_data_sem);
+
 		if (err2)
 			ext4_error(inode->i_sb,
 				   "Failed to mark inode %lu dirty",
@@ -2607,6 +2629,8 @@ static int mpage_prepare_extent_to_map(struct mpage_da_data *mpd)
 	mpd->map.m_len = 0;
 	mpd->next_page = index;
 	while (index <= end) {
+
+    /* OyTao: 在pagecache中寻找特定的tag的page, 放入到pagevec中 */　
 		nr_pages = pagevec_lookup_tag(&pvec, mapping, &index, tag,
 			      min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1);
 		if (nr_pages == 0)
@@ -2640,6 +2664,7 @@ static int mpage_prepare_extent_to_map(struct mpage_da_data *mpd)
 			if (mpd->map.m_len > 0 && mpd->next_page != page->index)
 				goto out;
 
+      /* OyTao: lock page important */
 			lock_page(page);
 			/*
 			 * If the page is no longer dirty, or its mapping no
@@ -2656,22 +2681,27 @@ static int mpage_prepare_extent_to_map(struct mpage_da_data *mpd)
 				continue;
 			}
 
+      /* OyTao: 等待writeback 完成 */
 			wait_on_page_writeback(page);
 			BUG_ON(PageWriteback(page));
 
 			if (mpd->map.m_len == 0)
 				mpd->first_page = page->index;
+
 			mpd->next_page = page->index + 1;
+
 			/* Add all dirty buffers to mpd */
 			lblk = ((ext4_lblk_t)page->index) <<
 				(PAGE_SHIFT - blkbits);
 			head = page_buffers(page);
+
 			err = mpage_process_page_bufs(mpd, head, head, lblk);
 			if (err <= 0)
 				goto out;
 			err = 0;
 			left--;
 		}
+
 		pagevec_release(&pvec);
 		cond_resched();
 	}
@@ -2796,8 +2826,10 @@ static int ext4_writepages(struct address_space *mapping,
 	ext4_io_submit_init(&mpd.io_submit, wbc);
 
 retry:
+  /* OyTao: TODO */
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag_pages_for_writeback(mapping, mpd.first_page, mpd.last_page);
+
 
 	done = false;
 	blk_start_plug(&plug);
@@ -2834,6 +2866,7 @@ retry:
 
 		trace_ext4_da_write_pages(inode, mpd.first_page, mpd.wbc);
 		ret = mpage_prepare_extent_to_map(&mpd);
+
 		if (!ret) {
 			if (mpd.map.m_len)
 				ret = mpage_map_and_submit_extent(handle, &mpd,
@@ -2848,6 +2881,7 @@ retry:
 				done = true;
 			}
 		}
+
 		/*
 		 * Caution: If the handle is synchronous,
 		 * ext4_journal_stop() can wait for transaction commit
@@ -2862,8 +2896,10 @@ retry:
 			ext4_journal_stop(handle);
 			handle = NULL;
 		}
+
 		/* Submit prepared bio */
 		ext4_io_submit(&mpd.io_submit);
+    
 		/* Unlock pages we didn't use */
 		mpage_release_unused_pages(&mpd, give_up_on_write);
 		/*
@@ -2894,6 +2930,7 @@ retry:
 			break;
 	}
 	blk_finish_plug(&plug);
+
 	if (!ret && !cycled && wbc->nr_to_write > 0) {
 		cycled = 1;
 		mpd.last_page = writeback_index - 1;

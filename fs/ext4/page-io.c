@@ -344,6 +344,7 @@ void ext4_io_submit(struct ext4_io_submit *io)
 		bio_set_op_attrs(io->io_bio, REQ_OP_WRITE, io_op_flags);
 		submit_bio(io->io_bio);
 	}
+
 	io->io_bio = NULL;
 }
 
@@ -384,16 +385,20 @@ static int io_submit_add_bh(struct ext4_io_submit *io,
 submit_and_retry:
 		ext4_io_submit(io);
 	}
+
 	if (io->io_bio == NULL) {
 		ret = io_submit_init_bio(io, bh);
 		if (ret)
 			return ret;
 	}
+
 	ret = bio_add_page(io->io_bio, page, bh->b_size, bh_offset(bh));
 	if (ret != bh->b_size)
 		goto submit_and_retry;
+
 	wbc_account_io(io->io_wbc, page, bh->b_size);
 	io->io_next_block++;
+
 	return 0;
 }
 
@@ -418,6 +423,7 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 		set_page_writeback_keepwrite(page);
 	else
 		set_page_writeback(page);
+
 	ClearPageError(page);
 
 	/*
@@ -446,6 +452,7 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 			set_buffer_uptodate(bh);
 			continue;
 		}
+
 		if (!buffer_dirty(bh) || buffer_delay(bh) ||
 		    !buffer_mapped(bh) || buffer_unwritten(bh)) {
 			/* A hole? We can safely clear the dirty bit */
@@ -455,11 +462,14 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 				ext4_io_submit(io);
 			continue;
 		}
+    
 		if (buffer_new(bh)) {
 			clear_buffer_new(bh);
 			unmap_underlying_metadata(bh->b_bdev, bh->b_blocknr);
 		}
+
 		set_buffer_async_write(bh);
+
 		nr_to_submit++;
 	} while ((bh = bh->b_this_page) != head);
 
@@ -490,6 +500,7 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 	do {
 		if (!buffer_async_write(bh))
 			continue;
+
 		ret = io_submit_add_bh(io, inode,
 				       data_page ? data_page : page, bh);
 		if (ret) {
@@ -500,6 +511,7 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 			 */
 			break;
 		}
+
 		nr_submitted++;
 		clear_buffer_dirty(bh);
 	} while ((bh = bh->b_this_page) != head);
@@ -510,13 +522,16 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 		if (data_page)
 			fscrypt_restore_control_page(data_page);
 		printk_ratelimited(KERN_ERR "%s: ret = %d\n", __func__, ret);
+
 		redirty_page_for_writepage(wbc, page);
 		do {
 			clear_buffer_async_write(bh);
 			bh = bh->b_this_page;
 		} while (bh != head);
 	}
+
 	unlock_page(page);
+  
 	/* Nothing submitted - we have to end page writeback */
 	if (!nr_submitted)
 		end_page_writeback(page);

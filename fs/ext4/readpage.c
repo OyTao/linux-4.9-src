@@ -89,6 +89,7 @@ static void mpage_end_io(struct bio *bio)
 			ClearPageUptodate(page);
 			SetPageError(page);
 		}
+
 		unlock_page(page);
 	}
 
