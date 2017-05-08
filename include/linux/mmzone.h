@@ -45,7 +45,11 @@
  *				   如映射的文件等。这类page在系统内存不足时候，是可以进行回写，
  *				   然后释放对应的page资源。
  * 4) Pcptypes, movable，表示per cpu中的数据库结构 TODO
- * CMA(可以参考NVME driver), ioslate TODO
+ * 5) CMA: (可以参考NVME driver), 预留一段内存给驱动使用，但当驱动不使用的时候，buddy
+ *      可以分配给用户进程用户匿名内存或者page cache.而当驱动需要使用时候，就将进程
+ *      占用的内存通过回收或者迁移的方式将之前占用的预留内存腾出来，供驱动使用。TODO
+ * 6)ioslate: 不能从其中分配页框，因为这个类型链表专门用于NUMA节点移动物理内存页，
+ *          将物理内存页移动到使用这个页最频繁的CPU上。 TODO
  */
 enum {
 	MIGRATE_UNMOVABLE,
@@ -401,6 +405,7 @@ struct zone {
 	int node;
 #endif
 	struct pglist_data	*zone_pgdat;
+
 	struct per_cpu_pageset __percpu *pageset;
 
 #ifndef CONFIG_SPARSEMEM
@@ -632,8 +637,11 @@ struct bootmem_data;
 
 /* OyTao:真实的物理内存 */
 typedef struct pglist_data {
+
 	struct zone node_zones[MAX_NR_ZONES];
+
 	struct zonelist node_zonelists[MAX_ZONELISTS];
+
 	int nr_zones;
 #ifdef CONFIG_FLAT_NODE_MEM_MAP	/* means !SPARSEMEM */
 	struct page *node_mem_map;

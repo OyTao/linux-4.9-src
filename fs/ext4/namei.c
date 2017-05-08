@@ -1414,6 +1414,7 @@ static struct buffer_head * ext4_find_entry (struct inode *dir,
 		dxtrace(printk(KERN_DEBUG "ext4_find_entry: dx failed, "
 			       "falling back\n"));
 	}
+
 	nblocks = dir->i_size >> EXT4_BLOCK_SIZE_BITS(sb);
 	start = EXT4_I(dir)->i_dir_start_lookup;
 	if (start >= nblocks)
@@ -2766,6 +2767,11 @@ bool ext4_empty_dir(struct inode *inode)
  *
  * Orphan list manipulation functions must be called under i_mutex unless
  * we are just creating the inode or deleting it.
+ */
+/*
+ * OyTao:
+ * orphan 机制
+ *
  */
 int ext4_orphan_add(handle_t *handle, struct inode *inode)
 {

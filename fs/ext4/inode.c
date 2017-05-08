@@ -3509,21 +3509,25 @@ static ssize_t ext4_direct_IO_write(struct kiocb *iocb, struct iov_iter *iter)
 	handle_t *handle;
 
 	if (final_size > inode->i_size) {
+
 		/* Credits for sb + inode write */
 		handle = ext4_journal_start(inode, EXT4_HT_INODE, 2);
 		if (IS_ERR(handle)) {
 			ret = PTR_ERR(handle);
 			goto out;
 		}
+
 		ret = ext4_orphan_add(handle, inode);
 		if (ret) {
 			ext4_journal_stop(handle);
 			goto out;
 		}
+
 		orphan = 1;
 		ei->i_disksize = inode->i_size;
 		ext4_journal_stop(handle);
 	}
+
 
 	BUG_ON(iocb->private == NULL);
 
@@ -3561,6 +3565,7 @@ static ssize_t ext4_direct_IO_write(struct kiocb *iocb, struct iov_iter *iter)
 	 * case, we allocate an io_end structure to hook to the iocb.
 	 */
 	iocb->private = NULL;
+
 	if (overwrite)
 		get_block_func = ext4_dio_get_block_overwrite;
 	else if (IS_DAX(inode)) {
@@ -3586,9 +3591,11 @@ static ssize_t ext4_direct_IO_write(struct kiocb *iocb, struct iov_iter *iter)
 		get_block_func = ext4_dio_get_block_unwritten_async;
 		dio_flags = DIO_LOCKING;
 	}
+
 #ifdef CONFIG_EXT4_FS_ENCRYPTION
 	BUG_ON(ext4_encrypted_inode(inode) && S_ISREG(inode->i_mode));
 #endif
+
 	if (IS_DAX(inode)) {
 		ret = dax_do_io(iocb, inode, iter, get_block_func,
 				ext4_end_io_dio, dio_flags);
@@ -3673,6 +3680,7 @@ static ssize_t ext4_direct_IO_read(struct kiocb *iocb, struct iov_iter *iter)
 	 * we are protected against page writeback as well.
 	 */
 	inode_lock_shared(inode);
+
 	if (IS_DAX(inode)) {
 		ret = dax_do_io(iocb, inode, iter, ext4_dio_get_block, NULL, 0);
 	} else {
@@ -3687,10 +3695,17 @@ static ssize_t ext4_direct_IO_read(struct kiocb *iocb, struct iov_iter *iter)
 					   NULL, NULL, 0);
 	}
 out_unlock:
+
 	inode_unlock_shared(inode);
 	return ret;
 }
 
+/*
+ * OyTao: 
+ * 1) direct IO不支持 journal data.
+ * 2) 不支持inline data.
+ * 3) 在directIO之前需要fdata_sync.
+ */
 static ssize_t ext4_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct file *file = iocb->ki_filp;
@@ -3715,10 +3730,12 @@ static ssize_t ext4_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 		return 0;
 
 	trace_ext4_direct_IO_enter(inode, offset, count, iov_iter_rw(iter));
+
 	if (iov_iter_rw(iter) == READ)
 		ret = ext4_direct_IO_read(iocb, iter);
 	else
 		ret = ext4_direct_IO_write(iocb, iter);
+
 	trace_ext4_direct_IO_exit(inode, offset, count, iov_iter_rw(iter), ret);
 	return ret;
 }

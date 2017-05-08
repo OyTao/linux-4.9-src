@@ -1672,6 +1672,7 @@ static inline int may_lookup(struct nameidata *nd)
 		int err = inode_permission(nd->inode, MAY_EXEC|MAY_NOT_BLOCK);
 		if (err != -ECHILD)
 			return err;
+
 		if (unlazy_walk(nd, NULL, 0))
 			return -ECHILD;
 	}
@@ -2067,6 +2068,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 			case 1:
 				type = LAST_DOT;
 		}
+
 		if (likely(type == LAST_NORM)) {
 			struct dentry *parent = nd->path.dentry;
 			nd->flags &= ~LOOKUP_JUMPED;
@@ -2094,6 +2096,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		do {
 			name++;
 		} while (unlikely(*name == '/'));
+
 		if (unlikely(!*name)) {
 OK:
 			/* pathname body, done */

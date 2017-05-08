@@ -375,6 +375,9 @@ EXPORT_SYMBOL(filemap_check_errors);
  * these two operations is that if a dirty page/buffer is encountered, it must
  * be waited upon, and not just skipped over.
  */
+/*
+ * OyTao；将当前的dirty page 都刷入到磁盘中。
+ */
 int __filemap_fdatawrite_range(struct address_space *mapping, loff_t start,
 				loff_t end, int sync_mode)
 {
@@ -390,7 +393,9 @@ int __filemap_fdatawrite_range(struct address_space *mapping, loff_t start,
 		return 0;
 
 	wbc_attach_fdatawrite_inode(&wbc, mapping->host);
+
 	ret = do_writepages(mapping, &wbc);
+
 	wbc_detach_inode(&wbc);
 	return ret;
 }
@@ -2069,6 +2074,10 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 		loff_t size;
 
 		size = i_size_read(inode);
+    /*
+     * OyTao: 在处理读写之前，首先需要把(pos, pos + count)范围内的page cache都写回
+     * 磁盘
+     */
 		retval = filemap_write_and_wait_range(mapping, iocb->ki_pos,
 					iocb->ki_pos + count - 1);
 		if (retval < 0)

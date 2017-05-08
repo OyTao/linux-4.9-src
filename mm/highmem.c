@@ -219,6 +219,7 @@ static inline unsigned long map_new_virtual(struct page *page)
 
 start:
 	count = get_pkmap_entries_count(color);
+
 	/* Find an empty entry */
 	for (;;) {
 		last_pkmap_nr = get_next_pkmap_nr(color);
@@ -254,6 +255,7 @@ start:
 			goto start;
 		}
 	}
+
 	vaddr = PKMAP_ADDR(last_pkmap_nr);
 	set_pte_at(&init_mm, vaddr,
 		   &(pkmap_page_table[last_pkmap_nr]), mk_pte(page, kmap_prot));
